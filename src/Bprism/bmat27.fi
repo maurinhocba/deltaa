@@ -1,0 +1,38 @@
+ SUBROUTINE bmat27(bm1,bs1,b3,shm,shs,sht,f,bmat,easts)
+ !
+ !*** B matrix  for a 3-D 12-node Prism solid-shell element
+ !    Green Lagrange Strains (TLF)
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: easts
+ REAL (kind=8), INTENT(IN) :: bm1(:,:,:,:),   & !(ndime,nnod1,3,nface) in-plane matrix at faces
+                              bs1(:,:,:,:),   & !(ndime,nnode,2,nface) transverse shear matrix at faces
+                              b3(:,:,:),      & !(ndime,nnode,nface) transverse strain at center or faces
+                              shm(:),         & !(nface) shape functions in zeta direction for membrane
+                              shs(:),         & !(nface) shape functions in zeta direction for shear
+                              sht(:),         & !(nface) shape functions in zeta direction for transverse
+                              f                 !EXP(2*alpha*zeta)
+
+ REAL (kind=8), INTENT(OUT) :: bmat(:,:,:)      !(ndime,nnode,nstre)B-matrix
+
+
+ ! local variables
+ INTEGER (kind=4) :: j                !indexe
+
+ !IN-PLANE components
+   bmat(:,:,1) = shm(1)*bm1(:,:,1,1) + shm(2)*bm1(:,:,1,2)
+   bmat(:,:,2) = shm(1)*bm1(:,:,2,1) + shm(2)*bm1(:,:,2,2)
+   bmat(:,:,4) = shm(1)*bm1(:,:,3,1) + shm(2)*bm1(:,:,3,2)
+ ! TRANSVERSE SHEAR components
+   bmat(:,:,5:6) = shs(1)*bs1(:,:,:,1) + shs(2)*bs1(:,:,:,2)
+ ! TRANSVERSE NORMAL components
+   IF( easts == 0  ) THEN
+     bmat(:,:,3) = sht(1)*b3(:,:,1) + sht(2)*b3(:,:,2)
+   ELSE IF( easts == 1 ) THEN
+     bmat(:,:,3) = b3(:,:,1)
+   ELSE
+     bmat(:,:,3) = b3(:,:,1)*f
+   END IF
+
+ RETURN
+ END SUBROUTINE bmat27

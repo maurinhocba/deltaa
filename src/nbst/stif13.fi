@@ -1,0 +1,209 @@
+ SUBROUTINE stif13(heade, coora, gstif, force, logst, stint, iffix)
+
+ ! computes stiffness matrix for element LBST
+ USE npo_db, ONLY : ifpre
+ USE kinc_db, ONLY : npsdf,ftsdf
+ IMPLICIT NONE
+                               !--------- to optimize ---------
+ INTEGER (kind=4), PARAMETER :: ndime =3, nnode = 3
+ LOGICAL, INTENT(IN) :: logst !large strain
+ REAL (kind=8), INTENT(IN) :: coora(:,:)      !present coordinates
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:), & !global stiffness matrix
+                                  force(:)    !global force vector (prescribe displacements)
+ TYPE (ele13), POINTER :: heade               !pointer to first element
+ REAL(kind=8), POINTER :: stint(:,:)       !moments and shear
+ INTEGER (kind=4), INTENT(IN) :: iffix(:)
+ !Local Variables
+
+ TYPE (ele13), POINTER :: e      !pointer to an element
+ TYPE (sideb), POINTER :: si     !pointer to branching side
+
+ LOGICAL :: isidf(3), & !if sides clamped
+            noside,   & !a node on a side exists
+            mti,      & !to recompute data
+            branch      !a branching side exists
+
+ INTEGER (kind=4) :: sides(3),pos(3),  & !if sides exist
+                     nbn,nbo,          & !number of nodes for branching element
+                     nvarl,            & !number of DOFs
+                     lnb(18)             !patch connectivities
+
+ REAL (kind=8) bmat(3,6,6),& !bending B matrix
+               x(3,6),     & !nodal coordinates of the patch
+               t(3,15),    & !local in-plane vector at sides elms
+               fc(2,3)       !factors for nodes on sides
+
+ REAL (kind=8), POINTER :: bb(:,:,:),   & !(3,nbn,3)  curvatures B matrix
+                           stiff(:)       !171 = nvarl*(nvarl+1)/2 stiffness matrix
+
+ INCLUDE '..\lbst\stif_p0.fpp'
+
+ !***  Compute Element Stiffness matrix for all elements
+
+ nbo = 6              !number of nodes in the patch
+ nvarl = nbo*ndime    !number of DOFs in the patch
+ ALLOCATE( stiff(nvarl*(nvarl+1)/2), bb(ndime,nbo,6) )      !stiffness and B matrices
+ osec = -1            !initializes secions
+ e => heade           !point to first element
+ ielem = 0
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = ielem + 1                 !element order
+   isec  = e%matno                   !associated material
+   newmt = osec /= isec              !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+     INCLUDE '..\lbst\stif_p1.fpp'
+   END IF
+
+   noside = .FALSE.                   !default
+   branch = ANY(e%lnods(4:6) < 0 )    !a branching side exists
+   IF( branch )THEN
+     nbn = 3                     !main triangle nodes
+     lnb(1:3) = e%lnods(1:3)     !first three nodes
+   ELSE
+     nbn = 6                     !standard 6-node patch
+     lnb(1:6) = e%lnods(1:6)     !pass the nodes
+   END IF
+   area1 = e%area1         !area of main element
+   x(1:3,1:3) = coora(1:3,e%lnods(1:3))   !nodes of main element
+
+   pos = (/ 1,2,3 /)
+   DO n=1,3             !for each side
+     i = n+3            !opposite position
+     l = e%lnods(i)     !opposite node
+     IF( l > 0 ) THEN    !opposite node exists
+       sides(n) = 1     !adjacent side exists
+       x(1:3,i) = coora(1:3,l)                !coordinates of node
+       IF(branch)THEN    !add node to list
+         nbn = nbn + 1   !update pointer
+         lnb(nbn) = l    !add node
+         pos(n) = nbn - 3
+       END IF
+     ELSE IF( l == 0 )THEN     !boundary side
+       sides(n) = 0     !no adjacent side
+       j = e%lnods(hh(3,n))   !node j (global)
+       k = e%lnods(hh(2,n))   !node k (global)
+       isidf(n) = ( iffix(j) /= 0 .AND. iffix(k) /= 0 )  !clamped side ?
+       IF( iffix(j) < 0 .AND. iffix(k) < 0 )THEN !node on a side
+         jn = hh(3,n)
+         kn = hh(2,n)
+         l = -iffix(j)  !compute position of the i+1 node
+         lnb(jn)   = nndpd(2,l)    !lower node
+         lnb(jn+6) = nndpd(3,l)    !upper node
+         l  = npsdf(-ifpre(1,j))        !first position
+         fc(1,jn) = ftsdf(l)       !factor
+         fc(2,jn) = 1d0-ftsdf(l)   !factor
+         l = -iffix(k)  !compute position of the i+2 node
+         lnb(kn)   = nndpd(2,l)    !lower node
+         lnb(kn+6) = nndpd(3,l)    !upper node
+         l  = npsdf(-ifpre(1,k))        !first position
+         fc(1,kn) = ftsdf(l)       !factor
+         fc(2,kn) = 1d0-ftsdf(l)   !factor
+         t(:,1:4) =  coora(:, lnb((/ jn,jn+6,kn+6,kn /)))    !node 1 - 4
+         t(:,5) = -t(:,1)+t(:,2)+t(:,3)-t(:,4) !phi,xita
+         t(:,6) = x(:,kn)-x(:,jn)    !side vector
+         CALL vecpro(t(1,5),t(1,6),x(1,i)) !outward normal vector
+         CALL vecuni(3,x(1,i),aux)          !unit normal to the quad
+         sides(n) = 2              !side element is solid
+         noside = .TRUE.
+         nbn = 9                   !1 or 2 sides on solids
+       ELSE
+         x(1:3,i) = 0d0          !null values (unnecessary perhaps)
+         sides(n) = 0             ! side does NOT exists
+       END IF
+     ELSE !IF( l < 0 )THEN !branching side
+       sides(n) = -1   !side element is a branching side
+       j = -l     !position in side conns
+       si => e%si(n)%p       !keep a pointer to the branching side
+       ! generate connectivities for enlarged B matrix
+       k = nbn + 1           !update new first position
+       nbn = nbn + si%nn-1   !new last position
+       lnb(k:nbn) = (/ ABS(si%lnods(1:j-1)), ABS(si%lnods(j+1:si%nn)) /)
+     END IF
+   END DO
+   IF( nbn /= nbo )THEN      !if size of matrices changed
+     DEALLOCATE( stiff, bb ) !release memory
+     nvarl = nbn*ndime       !new number of DOFs
+     ALLOCATE( stiff(nvarl*(nvarl+1)/2), bb(ndime,nbn,6) )  !get memory
+     nbo = nbn               !new size
+   END IF
+
+   stra1 = e%stra1     ! Metric tensors
+   ! local system & normals => t
+   CALL stra13(e%a,e%b,e%c,e%cd,e%ci,e%a0,e%area1,t,e%lb,x,sides,isidf,e%mems)
+
+   ! compute elasticity matrix
+   INCLUDE '..\lbst\stif_p2.fpp'
+
+   stiff = 0d0          !initializes STIFF
+   ! modify dmatx to include 3 membrane B matrix
+   daux(1:15)= daux(1:15)/3d0
+   daux(1:3) = daux(1: 3)/3d0
+   daux(7:8) = daux(7: 8)/3d0
+   daux(12)  = daux(12)  /3d0
+   ! membrane part (linear strain triangle)
+   CALL bmem13(e%a,e%b,e%cd,e%a0,e%gamma,bmat(:,:,1:3),t,e%mems)
+   CALL bfle13(e%a,e%b,e%c,e%ci,sides,isidf,bmat(:,:,4:6),t(:,1:9))
+   IF( noside )THEN  !if there are nodes on solid sides
+     bb(:,1:6,1:6) = bmat(:,:,1:6)
+     DO i=1,3
+       IF(e%lnods(i) == lnb(i)) CYCLE
+       bb(:,i,1:6)   = bmat(:,i,1:6)*fc(1,i)
+       bb(:,i+6,1:6) = bmat(:,i,1:6)*fc(2,i)
+     END DO
+   END IF
+   ! bending part
+   IF( branch )THEN    !if a branching side exists
+     CALL bbra13(bmat,e%lb,sides,nbn,e%si,bb,e%lnods(4:6))
+     CALL btdbpr(bb(1,1,1),daux(1),stiff(1),nvarl,6)
+   ELSE IF( noside )THEN  !if there are nodes on solid sides
+     mti = .FALSE.
+     DO i=3,1,-1
+       IF(sides(i) /= 2) CYCLE
+       jn = hh(3,i)
+       kn = hh(2,i)
+       IF( mti )THEN !recompute LNA and normal
+         t(:,1:4) =  coora(:, lnb((/ jn,jn+6,kn+6,kn /)))    !node 1 - 4
+         t(:,5) = -t(:,1)+t(:,2)+t(:,3)-t(:,4) !phi,xita
+       END IF
+       CALL vecuni(3,t(:,5),aux)      ! aux = 2 h
+       l = i+3
+       bb(:,jn,4:6)   = bb(:,jn,4:6)    -bb(:,l,4:6)/aux !node 1
+       bb(:,jn+3,4:6) = bb(:,jn+3,4:6)  +bb(:,l,4:6)/aux !node 2
+       bb(:,kn+3,4:6) = bb(:,kn+3,4:6)  +bb(:,l,4:6)/aux !node 3
+       bb(:,kn,4:6)   = bb(:,kn,4:6)    -bb(:,l,4:6)/aux !node 4
+       bb(:,l,:) = 0d0  !null values associated to auxiliar node
+       mti = .TRUE.  ! to update solid data
+     END DO
+     CALL btdbpr(bb(1,1,1),daux(1),stiff(1),nvarl,6)
+   ELSE !standard element
+     CALL btdbpr(bmat(1,1,1),daux(1),stiff(1),nvarl,6)
+   END IF
+   ! geometric stiffness due to membrane part
+   stres = stint(11:13,ielem)*area1/3d0
+   IF( noside )THEN !not solved yet
+   ELSE
+     DO i=1,3
+       IF( sides(i) > 0 )THEN
+         aux = ABS(e%a0(i)+2d0*e%gamma(i))  !angle at boundary
+         IF( aux <= alp1 )THEN              !smooth  use side (quadratic) metric tensor
+           aux = 0d0
+         ELSE IF( aux >= alp2 )THEN         !kink use element (linear) metric tensor
+           aux = 1d0
+         ELSE
+           aux = (aux-alp1)/alp3            !transition
+         END IF
+       ELSE
+         aux = 1d0                          !boundary use element (linear) metric tensor
+       END IF
+       CALL kgmm13(e%a,e%b,e%cd(:,:,i),stres,stiff,pos(i),nvarl,aux)
+     END DO
+   END IF
+   ! assemble stiffness matrix and force vector
+   CALL stiaux(nbn,lnb(1),nvarl,ndime,stiff(1),force(1),gstif(1) )
+   e => e%next
+ END DO
+ DEALLOCATE ( stiff, bb )
+ RETURN
+
+ END SUBROUTINE stif13

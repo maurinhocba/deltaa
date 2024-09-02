@@ -1,0 +1,76 @@
+ SUBROUTINE toar04(heade,lside,n0,lnod)
+
+ ! Create topological array
+
+ USE ctrl_db, ONLY : npoin
+ IMPLICIT NONE
+ TYPE (ele04), POINTER :: heade   !pointer to first element in the set
+ LOGICAL :: lside
+ INTEGER (Kind=4), INTENT(IN OUT) :: n0,lnod(:,:)
+
+ ! local variables
+ LOGICAL :: found
+ INTEGER (kind=4) i,j,n1,n2,n3,k1,k2,k3,ie,je,first,last
+ TYPE (ele04), POINTER  :: e                         !element pointers
+ INTEGER (kind=4), ALLOCATABLE :: ne(:,:)
+
+ !_____________________________
+
+ ALLOCATE ( ne(33,npoin) )  !allocate auxiliar array
+ ne = 0                     !initializes
+ e => heade             !point to first element
+ first = n0 + 1         !first element
+ last = n0              !initializes last element
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT !if all element processed EXIT loop
+   last = last + 1                     !increase number of elements
+   lnod(1:4,last) = e%lnods(1:4)       !copy element nodes
+   DO i=1,4                        !for each node
+     j = lnod(i,last)          !node number
+     ne(33,j) = ne(33,j) + 1   !increase element sharing
+     ne(ne(33,j),j) = last     !keep element
+   END DO
+   e => e%next               !point to next element to process
+ END DO
+
+ e => heade             !point to first element
+ DO ie=first,last       !for each element
+   DO i=1,4                         !for each face in the element
+     IF( lnod(i+4,ie) /= 0 )CYCLE   !if opposite face already find, CYCLE
+     n1 = lnod(kk(1,i),ie)             !first node of the face
+     n2 = lnod(kk(2,i),ie)             !second node of the face
+     n3 = lnod(kk(3,i),ie)             !third node of the face
+     found = .FALSE.                 !initializes search
+     first_loop : DO k1=1,ne(33,n1)  !search in the element conected with node n1
+       je = ne(k1,n1)                !element number
+       IF( ie == je )CYCLE           !of course
+         DO k2=1,ne(33,n2) !search in the elements conected with node n2
+         IF( je /= ne(k2,n2)) CYCLE  !if not the same element  CYCLE
+         DO k3=1,ne(33,n3) !search in the element conected with node n3
+           IF( je /= ne(k3,n3)) CYCLE  !if not the same element  CYCLE
+           found = .TRUE.
+           EXIT first_loop
+         END DO
+       END DO
+     END DO first_loop
+     IF (found) THEN                !face found
+       ! find the position in second element
+       j = 1                        !initializes
+       DO
+         IF( lnod(j,je) /= n1 .AND.  lnod(j,je) /= n2 .AND. &
+             lnod(j,je) /= n3 )EXIT  !check number
+         j = j + 1                  !increase pointer
+       END DO
+       lnod(i+4,ie) = lnod(j,je) !opposite global node
+       lnod(j+4,je) = lnod(i,ie) !opposite global node
+     END IF
+   END DO
+!
+   e%lnods(5:8) = lnod(5:8,ie) !pass computed nodes
+   WRITE(55,"(9i5)")e%numel,e%lnods
+   e => e%next                 !point to next element to process
+ END DO
+ lside = .TRUE.              !topological array created
+ DEALLOCATE (ne)
+ RETURN
+ END SUBROUTINE toar04

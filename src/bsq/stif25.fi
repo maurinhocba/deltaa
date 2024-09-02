@@ -1,0 +1,319 @@
+ SUBROUTINE stif25(heade, coora, gstif, force, logst, stm, stb, stint, iffix)
+
+ ! computes stiffness matrix for element LBST
+ USE npo_db, ONLY : ifpre,coorc
+ USE kinc_db, ONLY : npsdf,ftsdf
+ IMPLICIT NONE
+                               !--------- to optimize ---------
+ INTEGER (kind=4), PARAMETER :: ndime =3, nnode = 4
+ LOGICAL, INTENT(IN) :: logst !large strain
+ REAL (kind=8), INTENT(IN) :: coora(:,:),   & !present coordinates
+                              stm,          & !membrane stabilization factor
+                              stb             !bending stabilization factor
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:), & !global stiffness matrix
+                                  force(:)    !global force vector (prescribe displacements)
+ TYPE (ele25), POINTER :: heade               !pointer to first element
+ REAL(kind=8), POINTER :: stint(:,:)       !moments and shear
+ INTEGER (kind=4), INTENT(IN) :: iffix(:)
+ !Local Variables
+
+
+ TYPE (ele25), POINTER :: e      !pointer to an element
+ TYPE (sideb), POINTER :: si     !pointer to branching side
+
+ LOGICAL :: is(4),    & !if sides clamped
+            branch,   &!a branching side exists
+
+            noside,   & !a node on a side exists
+            solsi(4), & !a node on a side exists
+            mti         !to recompute data
+
+
+ INTEGER (kind=4) :: m,sn,qn,  & !index
+                     sides(4), & !if sides exist
+                     nbn,nbo,  & !number of nodes for branching element
+                     nvarl,    & !number of DOFs
+                     lnb(18)     !patch connectivities
+ INTEGER (kind=4), PARAMETER:: algo(8,2) = (/ 0,1,3,4,6,7,9,10 , 0,2,3,5,6,8,9,0 /)
+
+ REAL (kind=8) bmatx(3,12,7),& !bending B matrix
+               x(3,12),      & !nodal coordinates of the patch
+               t(3,2,0:8),   & !local in-plane vector at sides elms
+               t0(3),        & !element normal (main element)
+               tb(3,8),      & !element normal (adyacent element)
+               tns(3,2,8),   &
+               h(3,3),       &
+               fc(2,4),h2,   &
+               y(3,4),       &
+               hb(3,2),      &
+               aux1,         &
+               bb(12,3,4),   &
+               bbk(3,12,4),  &
+               bbg(3,12,4),  &
+               bns(3,4,3),   &
+               u(3,12),dx,   & !values used for stabilization
+               dt(4),        &
+               ds,           &
+               stbf
+               !stiff(666)      !666 = nvarl*(nvarl+1)/2
+ REAL (kind=8), POINTER :: bbs(:,:,:),   & !(3,nbn,3)  curvatures B matrix
+                           bst(:,:,:),   & !(3,nbn,4)  curvatures stabilization
+                           bbr(:,:,:),   & !(3,nbn,9)  curvatures B matrix
+                           bbrk(:,:,:),  &
+                           stiff(:)       !666 = nvarl*(nvarl+1)/2 stiffness matrix
+
+ INCLUDE '..\lbst\stif_p0.fpp'
+
+ !***  Compute Element Stiffness matrix for all elements
+
+ nbo = 12              !number of nodes in the patch
+ nvarl = nbo*ndime     !number of DOFs in the patch
+ ALLOCATE( stiff(nvarl*(nvarl+1)/2), bbs(ndime,nbo,6), bst(ndime,nbo,4), &
+           bbr(ndime,nbo,6),bbrk(ndime,nbo,4))  !stiffness and B matrices
+ osec = -1
+ e => heade
+ ielem = 0                           !element order
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = ielem + 1                 !element order
+   isec  = e%matno                   !associated material
+   newmt = osec /= isec              !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+     INCLUDE '..\lbst\stif_p1.fpp'
+     bmatx(:,:,4:7) = 0d0
+     stbf = stb*dm(16)               !bending hourglass control
+   END IF
+
+
+   branch = ANY(e%lnods < 0 )    !a branching side exists
+   IF( branch )THEN
+     nbn = 4                     !main quadrilateral nodes
+     lnb(1:4) = e%lnods(1:4)     !first four nodes
+   ELSE
+     nbn = 12                     !standard 12-node patch
+     lnb(1:12) = e%lnods(1:12)     !pass the nodes
+   END IF
+
+   !*** computes actual configuration
+   noside = .FALSE.                !default
+   solsi = .FALSE.                 !default
+   DO i =1,4                       !for all sides in the element
+     n = e%lnods(i)                !node number
+     x(1:3,i) = coora(1:3,n)       !get actual coordinates
+     u(1:3,i) = coorc(1:3,n)       !get actual coordinates
+     j = fn(i)                     !first node of associated side element (local)
+     l = e%lnods(j)                !first node of associated side element (global)
+     IF(l > 0) THEN               !if node exist
+       sides(i) = 1               !side element exists
+       x(:,j) = coora(:,l)     !get first node actual coordinates
+       u(:,j) = coorc(:,l)       !get actual coordinates
+       j = j+1                     !second (local) node
+       m = e%lnods(j)              !second (global) node
+       x(1:3,j) = coora(1:3,m)     !get second node actual coordinates
+       u(1:3,j) = coorc(1:3,m)       !get actual coordinates
+       IF(branch)THEN    !add node to list
+         nbn = nbn + 1   !update pointer
+         lnb(nbn) = l    !add node
+         nbn = nbn + 1   !update pointer
+         lnb(nbn) = m    !add node
+       END IF
+     ELSE IF( l == 0 )THEN     !boundary side
+       sides(i) = 0                !side element does not exists
+       m = e%lnods(nextn(i))       !n is the first node  m is the second node of the side
+       x(1:3,nextn(i)) = coora(1:3,m) !get second node original coordinates
+       is(i) = ( iffix(n) /= 0 .AND. iffix(m) /= 0 )  !clamped side ?
+       IF( iffix(n) < 0 .AND. iffix(m) < 0 )THEN !node on a side
+        jn = ln(2,i)
+        kn = ln(1,i)
+        l = -iffix(n)            !compute position of the i+1 node
+        lnb(jn)    = nndpd(2,l)
+        lnb(jn+12) = nndpd(3,l)
+
+        l  = npsdf(-ifpre(1,n))        !first position
+        fc(1,jn) = ftsdf(l)       !factor
+        fc(2,jn) = 1d0-ftsdf(l)   !factor
+
+        l = -iffix(m)            !compute position of the i+2 node
+        lnb(kn)    = nndpd(2,l)
+        lnb(kn+12) = nndpd(3,l)
+
+        l  = npsdf(-ifpre(1,m))        !first position
+        fc(1,kn) = ftsdf(l)       !factor
+        fc(2,kn) = 1d0-ftsdf(l)   !factor
+
+        y   =  coora(:, lnb((/ jn,jn+12,kn+12,kn /)))  ! nodes of the quadrilateral
+        t(:,1,1) = -y(:,1)+y(:,2)+y(:,3)-y(:,4) !phi,xita at the center
+        CALL vecuni(3,t(1,1,1),h2)          !unit normal at the solid
+        t(:,2,1) = x(:,nextn(i))-x(:,i)  !side vector
+        CALL vecpro(t(1,1,1),t(1,2,1),x(1,j)) !outward (to the solid) normal vector
+        CALL vecuni(3,x(1,j),aux)          !unit normal to the quad
+        e%normd(1:3,2,i+4) = -x(:,j)       !store unit normal to the solid side
+        solsi(i) = .TRUE.
+        noside = .TRUE.
+        nbn = 16              !1 or 2 sides on solids
+      ELSE
+        x(1:3,j:j+1) = 0d0           !null values (unnecessary)
+      END IF
+     ELSE              !ELSE IF( n < 0 )THEN branching side
+       sides(i) = -1   !side element is a branching side
+       j = -l          !position in side conns
+       si => e%si(i)%p !point SI to the corresponding branching side
+       ! generate connectivities for enlarged B matrix
+       k = nbn + 1           !update new first position
+       nbn = nbn + 2*si%nn-2   !new last position
+       lnb(k:nbn) = (/ ABS(si%lnods(1:2*j-2)), ABS(si%lnods(2*j+1:si%nn*2)) /)
+     END IF
+   END DO
+   IF( nbn /= nbo )THEN      !if size of matrices changed
+     DEALLOCATE( stiff, bbs, bst, bbr, bbrk) !release memory
+     nvarl = nbn*ndime       !new number of DOFs
+     ALLOCATE( stiff(nvarl*(nvarl+1)/2), bbs(ndime,nbn,6) , bst(ndime,nbn,4), &
+               bbr(ndime,nbn,6), bbrk(ndime,nbn,4))  !get memory
+     nbo = nbn               !new size
+   END IF
+
+   area1 = e%area(0)       !area of main element
+   stra1 = e%stra1   ! Metric tensors
+   ! local system & normals => t, t0
+   CALL stra25(e%cartd,e%normd,e%ns,t,t0,tb,tns,e%a0,e%ci,x,sides,is,h, &
+               hb,dt,e%area,e%gamma)
+
+   ! compute elasticity matrix
+   INCLUDE '..\lbst\stif_p2.fpp'
+
+   stiff = 0d0   !initializes local stiffness matrix
+   ! membrane part (assumed strain quad)
+   CALL bmem25(e%cartd(:,:,1:4),bmatx(:,1:4,1:3),bb,t(:,:,1:4),e%area(1:4),4)
+   ! bending part
+   IF( shell) CALL bfle25(e%normd,e%ci,e%ns,sides,is,solsi,bmatx(:,:,4:7),bbk, &
+                          bbg,bns,dt,t,t0,tb,h,e%area(0),e%lb)
+
+   IF( noside )THEN  !if there are nodes on solid sides
+     bbs(:,1:12,1:6) = bmatx(:,:,1:6) !patch nodes
+     bst(:,1:12,1:4) = bbk(:,:,1:4)
+     DO i=1,4
+       IF(e%lnods(i) == lnb(i))THEN
+         bbs(:,i+12,1:6) = 0d0
+         !stabilization contribution
+         bst(:,i+12,1:4) = 0d0
+       ELSE
+         bbs(:,i+12,1:6) = bbs(:,i,1:6)*fc(2,i)
+         bbs(:,i,1:6)    = bbs(:,i,1:6)*fc(1,i)
+         !stabilization contribution
+         bst(:,i+12,1:4) = bst(:,i,1:4)*fc(2,i)
+         bst(:,i,1:4)    = bst(:,i,1:4)*fc(1,i)
+       END IF
+     END DO
+   END IF
+
+   IF( noside )THEN !if there are nodes on solid sides
+     mti = .FALSE.  !initializes
+      DO i=4,1,-1 !reverse order to use last side on solid
+        IF(solsi(i))THEN
+          jn = ln(2,i)
+          kn = ln(1,i)
+          IF( mti )THEN !recompute normal at solid
+            y =  coora(:, lnb((/ jn,jn+12,kn+12,kn /)))  ! nodes of the quadrilateral
+            t(:,1,1) = -y(:,1)+y(:,2)+y(:,3)-y(:,4) !phi,xita at the center
+            CALL vecuni(3,t(1,1,1),h2)      ! aux = 2 h
+          END IF
+
+          bns(:,i,1:3) = bns(:,i,1:3)/h2
+
+          ! simplified approach
+          bbs(:,jn,4:6)    = bbs(:,jn,4:6)     -bns(:,i,1:3) !node 1
+          bbs(:,jn+12,4:6) = bbs(:,jn+12,4:6)  +bns(:,i,1:3) !node 2
+          bbs(:,kn+12,4:6) = bbs(:,kn+12,4:6)  +bns(:,i,1:3) !node 3
+          bbs(:,kn,4:6)    = bbs(:,kn,4:6)     -bns(:,i,1:3) !node 4
+          mti = .TRUE.  ! to update solid data
+        END IF
+      END DO
+     CALL btdbpr(bbs(1,1,1),daux(1),stiff(1),nvarl,6)
+   ELSE IF( branch )THEN    !if a branching side exists
+     CALL bbra25(bmatx,bbg,e%lb,sides,nbn,e%si,bbr,bbrk,e%lnods(5:12), &
+                 dt,e%ns)
+     CALL btdbpr(bbr(1,1,1),daux(1),stiff(1),nvarl,6)
+   ELSE !standard element
+     CALL btdbpr(bmatx(1,1,1),daux(1),stiff(1),nvarl,6) !material part (1 Gauss point)
+   END IF
+
+   IF( noside )THEN
+     !not improvement seen
+   ELSE
+     stres(1:3) = stint(1:3,ielem)*area1  !scaled membrane forces for Geometric stiffness
+     ! geometric stiffness due to membrane part (full version)
+     CALL kgmm25f(e%cartd(:,:,1:4),stres(1:3),stiff,nvarl,e%area(1:4))
+   END IF
+   ! STABILIZATION MATRIX
+   ! membrane stabilization
+   IF( stm > 0d0 )THEN
+     !daux(1:6) = area1*dm((/ 1,2,3,7,8,12 /))
+     ! material stiffness matrix
+     IF( branch )THEN    !if a branching side exists
+       DO k=1,4  !for each side point
+         ds = area1*dm(12)*e%area(k)*stm  !scale the elasticity matrix
+         CALL btdbpr1(bb(1,3,k),ds,stiff(1),12,1,nvarl)
+       END DO
+     ELSE
+       k = 1
+       DO i=1,12
+         l = (13-i)/3*2
+         SELECT CASE (mod(i,3))
+         CASE (0) !nada
+         CASE (1)
+           l = (13-i)/3*2
+           WRITE(58,"(8e13.4)")(stiff(k+algo(j,1)),j=1,l)
+         CASE (2)
+           l = (13-i)/3*2+1
+           WRITE(58,"(8e13.4)")(stiff(k+algo(j,2)),j=1,l)
+         END SELECT
+         k = k+37-i
+       END DO
+       DO k=1,4  !for each side point
+         ds = area1*dm(12)*e%area(k)*stm  !scale the elasticity matrix
+         CALL btdbpr1(bb(1,3,k),ds,stiff(1),12,1,nvarl)
+         WRITE(58,"(12e12.4)")bb((/1:2,4:5,7:8,10:11/),3,k)
+       END DO
+       k = 1
+       DO i=1,12
+         l = (13-i)/3*2
+         SELECT CASE (mod(i,3))
+         CASE (0) !nada
+         CASE (1)
+           l = (13-i)/3*2
+           WRITE(58,"(8e13.4)")(stiff(k+algo(j,1)),j=1,l)
+         CASE (2)
+           l = (13-i)/3*2+1
+           WRITE(58,"(8e13.4)")(stiff(k+algo(j,2)),j=1,l)
+         END SELECT
+         k = k+37-i
+       END DO
+     END IF
+   END IF
+   ! bending stabilization
+   IF( stbf > 0d0 )THEN
+     aux = area1*stbf
+     ! material stiffness matrix
+     IF( branch )THEN    !if a branching side exists
+       DO k=1,4  !for each curvature component
+         CALL btdbpr1(bbrk(1,1,k),aux,stiff(1),nvarl,1,nvarl)
+       END DO
+     ELSE IF( noside )THEN
+       DO k=1,4  !for each curvature component
+         CALL btdbpr1(bst(1,1,k),aux,stiff(1),nvarl,1,nvarl)
+       END DO
+     ELSE!standard element
+       DO k=1,4  !for each curvature component
+         CALL btdbpr1(bbk(1,1,k),aux,stiff(1),nvarl,1,nvarl)
+       END DO
+     END IF
+   END IF
+
+   ! assemble stiffness matrix and force vector
+   CALL stiaux(nbn,lnb(1),nvarl,ndime,stiff(1),force(1),gstif(1) )
+   e => e%next
+ END DO
+ DEALLOCATE ( stiff, bbs, bst, bbr, bbrk)
+ RETURN
+
+ END SUBROUTINE stif25

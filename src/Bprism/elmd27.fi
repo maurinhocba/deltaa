@@ -1,0 +1,103 @@
+ SUBROUTINE elmd27 (nelem, heade, taile, iwrit, ngaus, ansmm, anssh, easts, nassp)
+ !*******************************************************************
+ !
+ !*** READ element DATA for 3-D SOLID-SHELL Bezier-Prism element(TLF)
+ !
+ !*******************************************************************
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: iwrit, ngaus, ansmm, anssh, easts, nassp
+ INTEGER (kind=4), INTENT(IN OUT) :: nelem
+ TYPE (ele27), POINTER :: heade,taile !pointers to first and last elements
+ ! local variables
+ TYPE(section), POINTER :: sec        !pointer to a section
+ LOGICAL found
+ INTEGER (kind=4) :: i,ip,j,chnode,isec,osec,secty,mtype
+
+ INTEGER (kind=4) :: mats(3) = (/ 1,5,6 /)  !acceptable material types
+ TYPE (ele27), POINTER :: elem      !auxiliar pointer
+
+ ! *** READ the element nodal connections, and the property numbers.
+
+ IF(iwrit == 1) WRITE(lures,"(//'  ELMT MAT',29x,'NODE NUMBERS',&
+                              &   29x,'angle')",ERR=9999)
+
+ osec = -1  !initializes
+ j = 2+nnode  !last integer value to read
+ DO
+   ! loop over elements
+
+   CALL listen('ELMD27')          !read a card
+   IF (exists('ENDELE')) EXIT     !if key word END_ELEMENT read, exit loop
+
+   nelem = nelem + 1         !increase element counter
+   CALL new_ele27e (elem)    !reserve memory for data
+
+   elem%numel = INT (param(1))   !element label
+
+   isec = INT (param(2))         !associated material
+
+   IF( isec /= osec )THEN        !checks
+     CALL sect_search (isec,found,sec,ip)
+     IF(.NOT.found)CALL runend('ELMD27: Invalid Section Number used')
+     secty = sec%secty        !check section type for element
+     IF( secty /= 0 ) CALL runend('ELMD27: Invalid sect. type for SOLID')
+     IF( sec%mabas >= 0 )THEN
+       mtype = sec%mtbas%mtype  !check material type for element
+       IF( .NOT. ANY(mtype == mats) ) CALL runend('ELMD27: Invalid Mat. type for SPRISM')
+     END IF
+     osec = isec
+   END IF
+   elem%matno = ip        !store section position in array
+
+   elem%lnods = INT (param(3:j))  !connectivities
+   elem%angle = param(j+1)        ! Euler angle between standart and Ortho
+   !    echo according to flag
+   IF(iwrit == 1) WRITE(lures,"(i6,i3,12i6,F7.4)",ERR=9999) &
+                  elem%numel,isec,elem%lnods,elem%angle
+
+   !     original node labels are changed
+   DO i=1,nnode
+     elem%lnods(i) = chnode(elem%lnods(i))
+   END DO
+   ! reserve memory for arrays and initializes
+   ALLOCATE( elem%stint(nstre,ngaus,ngaup))
+   elem%stint = 0d0
+   !  membrane part
+   IF( ansmm == 0 )THEN
+     ALLOCATE( elem%ipcdm(nnode,2,nface,ngaup))
+     elem%ipcdm = 0d0
+   ELSE
+     ALLOCATE( elem%jacim(2,2,nface,ngaup))
+     elem%jacim = 0d0
+   END IF
+   !  shear part
+   IF( anssh == 0 )THEN
+     ALLOCATE( elem%cartd(nnode,3,nface,ngaup))
+     elem%cartd = 0d0
+   ELSE
+     ALLOCATE( elem%nfdas(nnode,nassp,nface))
+     elem%nfdas = 0d0
+     ALLOCATE( elem%jacis(2,2,nface,ngaup))
+     elem%jacis = 0d0
+   END IF
+   !  transverse normal part
+   IF(  easts < 2 )THEN
+     j = nface - easts    !number of sampling surfaces
+     ALLOCATE( elem%nf3(nnode,j,ngaup))
+     ALLOCATE( elem%c33i(ngaup,j), elem%set(ngaup,j) )
+   ELSE
+     ALLOCATE( elem%alpha(ngaup),  elem%ka(ngaup), elem%h(ndofe, ngaup), &
+               elem%nf3(nnode,1,ngaup), elem%c33i(ngaup,1), elem%set(ngaup,1) )
+     elem%alpha = 0d0 ; elem%ka = 1d0; elem%h = 0d0
+   END IF
+   elem%nf3=0d0; elem%c33i = 0d0; elem%set = 0d0
+   ALLOCATE (elem%gausv(12,ngaus,ngaup))
+   elem%gausv = 0d0
+   CALL add_ele27e (elem, heade, taile) !add element to list
+
+ END DO
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE elmd27

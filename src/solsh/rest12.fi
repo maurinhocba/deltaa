@@ -1,0 +1,43 @@
+ SUBROUTINE rest12 (nelem, nnb, nreqs, heade, taile, ngrqs, quad)
+ !******************************************************************
+ !
+ !***  restore an element set at restart for shell element CST-BST (TLF)
+ !
+ !******************************************************************
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: nreqs, & !Number of elements for requested output
+                                 nnb,   & !number of nodes per elements in the set
+                                 nelem    !number of elements in the set
+ INTEGER (kind=4), POINTER  :: ngrqs(:) !elements for requested output
+ LOGICAL, INTENT(IN) :: quad
+ TYPE (ele12), POINTER  :: heade,taile  !pointers to first and last element
+ ! local variables
+ INTEGER (kind=4) :: i,ielem,nnode
+ TYPE (ele12), POINTER :: e
+
+ nnode = nnb  !many things must change here
+ IF( quad ) nnode = 12
+
+ DO ielem=1,nelem    !for each element
+
+   CALL new_ele12e (e)    !reserve memory for data
+   ALLOCATE (e%lnods(nnode),e%h(3*nnode)) !get memory
+   READ (51) e%numel,e%matno,e%lnods
+   READ (51) e%angle,e%dvol,e%cartd,e%nfdas,e%jacin,e%stres,e%alpha,e%ka
+   READ (51) e%h,e%stint
+   IF( nnode == 12 )THEN
+     ALLOCATE( e%cdq(4,2,3,2) )
+     READ (51) e%cdq
+   END IF
+
+   CALL add_ele12e (e, heade, taile)           !add element to the list
+
+ END DO
+ IF ( nreqs > 0 )THEN
+   ALLOCATE(ngrqs(nreqs))
+   READ (51) (ngrqs(i), i=1,nreqs)  !read elements for output
+ END IF
+
+ RETURN
+ END SUBROUTINE rest12

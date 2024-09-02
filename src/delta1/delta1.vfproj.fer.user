@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<VisualStudioUserFile ProjectCreator="Intel Fortran" Keyword="Console Application" Version="11.0" ProjectIdGuid="{1C5D56EF-CDCE-4E44-B262-652F0AAD8311}">
+	<Configurations>
+		<Configuration Name="Debug|Win32" WorkingDirectory="e:\ndata\shelq\ortho\trig"/>
+		<Configuration Name="Release|Win32" WorkingDirectory="e:\ndata\luis"/>
+		<Configuration Name="release64|Win32" WorkingDirectory="e:\ndata\luis"/>
+		<Configuration Name="Debug|x64" CommandArguments="snl.dat" WorkingDirectory="E:\ndata\beame"/>
+		<Configuration Name="Release|x64" CommandArguments="pl6c.dat" WorkingDirectory="e:\ndata\bprism\dyn"/>
+		<Configuration Name="release64|x64" WorkingDirectory="e:\ndata\luis"/></Configurations></VisualStudioUserFile>

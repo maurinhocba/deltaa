@@ -1,0 +1,64 @@
+ SUBROUTINE mase12 (nreqs,nelem,heade,ngrqs,narch,angle,sname,ngaus,locax,zigzag,nnb)
+
+ !performs the final tasks in ACVD12 at a restart
+
+ IMPLICIT NONE
+
+ INTEGER (kind=4) :: nreqs,nelem,narch,ngaus,locax,nnb
+ INTEGER (kind=4), POINTER  :: ngrqs(:)
+ REAL (kind=8 ) :: angle
+ TYPE (ele12), POINTER  :: heade
+ CHARACTER (len=*) :: sname
+ LOGICAL :: zigzag
+
+ INTEGER (kind=4) i
+ TYPE (ele12), POINTER :: e
+ TYPE (section), POINTER :: sec    !pointer to a section data
+ TYPE (postv), POINTER :: postp       !pointer to first postprocess variable
+
+ e => heade                         !point to first element
+ WRITE(17,ERR=9)12,nelem,sname  !elm_type, number of elements, set_name
+ sec => psecs(e%matno)%p            !point to section of first element in the set
+ IF( zigzag )THEN        !if special post-process variables
+   !WRITE(17,err=9) ngaus,nnb,8+sec%secdef(5),locax !nvarg
+   WRITE(17,err=9) 1,nnb,8+sec%secdef(5),locax !nvarg
+   postp => sec%postp
+   WRITE (17,err=9) sec%secdef(4),e%matno
+   DO i=1,sec%secdef(4)
+     WRITE (17,err=9) postp%type,postp%dim,postp%name
+     postp => postp%next
+   END DO
+ ELSE
+   !WRITE(17,err=9) ngaus,nnb,8+8,locax !nvarg
+   WRITE(17,err=9) 1,nnb,8+8,locax !nvarg
+   postp => sec%postp
+   WRITE (17,err=9) 3,e%matno
+   DO i=1,3
+     WRITE (17,err=9) postp%type,postp%dim,postp%name
+     postp => postp%next
+   END DO
+ END IF
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT   !if all elements processed, exit loop
+   WRITE(17,ERR=9) e%matno,e%lnods(1:nnb)  !material, and nodes
+   e => e%next                      !point to next element
+ END DO
+
+ WRITE(17,ERR=9) angle, 0d0, 0d0    !set angles
+ e => heade                         !point to first element
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT     !if all elements processed, exit loop
+   WRITE(17,ERR=9) e%angle, 0d0, 0d0  !local angles
+   e => e%next                      !point to next element
+ END DO
+
+ IF(nreqs > 0) THEN                         !if output requested
+   CALL openfi(nfile=21,narch=narch)        !open file
+   WRITE(narch,ERR=9)nreqs,8,(ngrqs(i),i=1,nreqs) !write header
+   WRITE(narch,err=9) 12,sname,'N_xx ','N_yy ','N_xy ','M_xx ','M_yy ', &
+                               'M_xy ','Qx   ','Qy   '
+ END IF
+
+ RETURN
+ 9 CALL runen2('')
+ END SUBROUTINE mase12

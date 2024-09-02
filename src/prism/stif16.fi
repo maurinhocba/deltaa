@@ -1,0 +1,378 @@
+ SUBROUTINE stif16(nnode, ngaus, nassp, small, quad, shell, sbbar, heade, gstif, force, coora, nfnda, pag)
+
+ ! 6/15/18-node solid element (prism).
+ ! use Green-Lagrange strains and 2nd Piola-Kirchhoff stresses
+ USE ele18_db, ONLY : rubber3d
+ IMPLICIT NONE
+                               !--------- to optimize ---------
+ INTEGER (kind=4), PARAMETER :: ndime =3, nstre = 6
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: nnode, ngaus,nassp
+ REAL (kind=8), INTENT(IN) :: coora(:,:),nfnda(:,:,:), pag(:,:,:)
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:),force(:)
+ TYPE (ele16), POINTER :: heade
+ LOGICAL, INTENT(IN) :: small,quad,shell, & !.TRUE. assumed strain for transverse shear
+                        sbbar               !.TRUE. BBAR for volumetric strain
+
+ !Local Variables
+ LOGICAL, PARAMETER :: natst = .FALSE.
+ REAL (kind=8), PARAMETER :: gpz(2)   =  (/ -1.D0, 1.D0  /)  ! external surfaces
+ !REAL (kind=8), PARAMETER :: gpz(2)   =  (/ -0.577350269169626D+00, 0.577350269169626D+00 /) ! standard Gauss points
+ LOGICAL :: bbar
+ TYPE (ele16), POINTER :: e
+ LOGICAL  :: newmt,plast,elast,sides(3)
+ INTEGER (kind=4) :: ielem,isec,i,j,g,k,ii,jj,l,   &
+                     osec,mtype,nvarl,nlayr,nn,ngaup,ngaud
+
+ REAL (kind=8) t(3,3),efpst,posgp(3),weigp(3),          &
+               daux(21),stres(6),cm(6,6),aux1,          &
+               stran(6),voli,staux(3),dvol(3),      &
+               d(6,6),deatht,lambd,young,poiss,km ,kmat(45,45)
+
+ REAL (kind=8), ALLOCATABLE :: stiff(:),     & ! nvarl*(nvarl+1)/2
+                               bmatx(:,:,:), & ! ndime,nnode,6
+                               bb(:,:,:),    & ! ndime,nnode,ngaup
+                               bq(:,:,:,:),  & ! ndime,6=nnode,3,2
+                               x(:,:),       & ! ndime,nnode
+                               tq(:,:,:,:),  & ! ndime,2,3,2
+                               cq(:,:),      & ! 3,2
+                               sh(:,:)         ! 2,ngaud
+ ! variables for assumed strain transverse shear
+ REAL (kind=8) :: tas(3,nassp),      & ! der x/x_3 at Assumed Strain points
+                  gas(3,nassp),      & ! der x/tan at Assumed Strain points
+                  vas(nassp,2),      & ! strains at Assumed Strain Points
+                  bs(3,nnode,nassp,2)  ! B matrix at Assumed strain Points
+
+ REAL (kind=8) :: propi(13),   & !(nnn) material properties
+                  chi(12)        !(12) Hill coefficients
+
+ TYPE (section), POINTER :: sec
+ TYPE (mater), POINTER :: mat
+ !TYPE (mater), POINTER :: matm,matf !pointer to a material data
+
+ INTERFACE
+   INCLUDE 'modp18.h'
+ END INTERFACE
+
+ !***  Compute Element Stiffness matrix for all elements
+
+ IF( quad ) THEN   !for quadratic approach
+   nn = 12             !number of nodes in the patch
+   ALLOCATE(  bq(ndime,6,3,2),cq(3,2),tq(ndime,2,3,2) )  !in-plane B-matrix at faces & deformation gradient at face sides
+ ELSE
+   nn = nnode          !number of element nodes
+ END IF
+ nvarl = nn*ndime      !number of element DOFs
+ IF( MOD(ngaus,2) == 0 ) THEN  ! 2 or 6 or 8
+   ngaud = 2
+   ngaup = ngaus/ngaud     ! 3 or 4
+ ELSE                          ! 7 or 9
+   ngaud = 3
+   ngaup = (ngaus+2)/ngaud     ! 3
+ END IF
+ IF( quad .OR. shell )THEN
+   CALL gaussq (ngaud ,posgp ,weigp ) ! get standard  gauss points in local coordinates and weigths (TTT integratio)
+   ALLOCATE( sh(2,ngaud) )            !to interpolate ANS membrane/shear strains to TTT integration points (QUAD or SHELL/SHQUAD)
+   DO k=1,ngaud
+     sh(:,k) =(/ (1d0+posgp(k)/gpz(1))/2d0, (1d0+posgp(k)/gpz(2))/2d0 /)
+   END DO
+ END IF
+
+ ALLOCATE( stiff(nvarl*(nvarl+1)/2), bmatx(ndime,nn,6),bb(ndime,nn,ngaup),x(ndime,nn) )
+ bmatx = 0d0           !initializes B-matrix
+ osec = -1             !initialize to a non-existent section
+ e => heade            !point to first element
+
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = e%numel
+   isec = e%matno
+   newmt = osec /= isec              !a different material must be considered
+   IF(newmt)THEN                     !if new material, get properties
+     bbar = sbbar     !for simplex element
+     osec = isec                     !keep present material
+     sec => psecs(isec)%p            !point to section
+     nlayr = sec%iprop(1)             !number of layers
+     !nvar  = sec%iprop(2)             !total number of internal variables
+
+     !************************** STANDARD SOLID *****************************************
+     IF( nlayr == 0 )THEN            !standard solid section (not layered)
+
+       mat => sec%mtbas                !point to associated material
+       mtype = mat%mtype               !type of base material
+       elast = mat%matdef(3) == 1      !elastic material
+       !is    = mat%matdef(4)           !isotropic hardening model
+       ! ------------------------------------------------------------------------------------
+       ! ONLY MTYPES 1, 5, and 6 ARE ALLOWED
+       SELECT CASE (mtype)
+       ! ------------------------------------------------------------------------------------
+       CASE (1)                        !Isotropic Elastic - Anisotropic Plastic  ( mtype == 1)
+         !IF( .NOT.elast ) THEN
+         !  ! e1, nu1, uniaxial, efren, consn, r, exponent m, hill 79
+         !  propi(1:4) = mat%propp(1:4)       ! isotropic hardening parameters
+         !  propi(5) = REAL( mat%matdef(4),8) ! isotropic hardening model
+         !  chi    = mat%propp(16:27)         ! hill coefficients
+         !  IF( mat%matdef(6) == 1  ) chi(1:6) = chi(7:12)  !associative
+         !  deatht = mat%propp(5)             !end of plasticity
+         !  plast = propi(1) > 0  !consider plasticity ?
+           young = mat%prope(1)          ! young modulus
+           poiss = mat%prope(2)          ! poisson ratio
+           km    = mat%prope(4)          ! bulk modulus
+         !  ! von Mises plasticity IF( mat%matdef(3) <= 2 )
+           CALL modp18(d,young,poiss,propi,0d0,0d0,bbar,elast,newmt)
+         !ELSE
+           plast = .FALSE.
+        ! END IF
+         ! ------------------------------------------------------------------------------------
+       CASE (5)                        !Orthotropic Elastic - No Plasticity      ( mtype == 5)
+         d = RESHAPE( mat%prope(26:61), (/6,6/) )
+         elast = .TRUE.
+         plast = .FALSE.                        !consider plasticity ?
+         newmt = .FALSE.                        !same material than previous ?
+         bbar  = .FALSE.                   !coupled shear and volumetric part
+         plast = .FALSE.
+       ! ------------------------------------------------------------------------------------
+       CASE (6)                        !Hyperelastic isotropic rubber            ( mtype == 6)
+         propi(1:12) = mat%prope(7:18)     !elastic properties
+         elast = .TRUE.                    !elastic only
+         plast = .FALSE.                        !consider plasticity ?
+         newmt = .FALSE.                        !same material than previous ?
+       ! ------------------------------------------------------------------------------------
+       END SELECT
+
+       !************************** LAYERED SOLID *************************************************
+     ELSE  !nlayr >= 1      layered solid (at integration point level)
+       !thick = sec%rprop(1)             !original thickness
+       !minstr= sec%rprop(4)             !strain threshold to use TTTI
+       !nl=1
+       elast = .TRUE. !sec%iprop(3) == 0               !elastic problem
+       plast = .NOT.elast                      !consider plasticity ?
+       d = RESHAPE( sec%rprop(6:41), (/6,6/) )                 !linear elastic integrated matrix
+       !IF( plast )THEN  !plastic lamina
+       !  IF( ALLOCATED ( rr ) )DEALLOCATE( thickl,zposl,rr,matsl,lvari )
+       !  ALLOCATE( thickl(nlayr),zposl(nlayr),rr(5,nlayr),matsl(3,nlayr),lvari(nlayr) )
+       !  i = 42                                !pointer to layer thickness
+       !  CALL vecasi(nlayr,sec%rprop(i),thickl(1))        !layer thickness
+       !  i = i+2*nlayr                         !pointer to layer z position
+       !  !CALL vecasi(nlayr,sec%rprop(i),zposl(1))         !layer z position
+       !  i = i+nlayr                           !pointer to layer rotation matrix
+       !  CALL vecasi(nlayr*5,sec%rprop(i),rr(1,1))        !layer rotation matrix
+       !
+       !  lvari(1:nlayr)= sec%iprop(nlayr+5:2*nlayr+4)
+       !  DO il=1,nlayr
+       !    mate= sec%iprop(4+il)
+       !    mat => pmats(mate)%p        !search layer material
+       !    matsl(1,il)%p => mat
+       !    SELECT CASE (mat%mtype)
+       !    CASE ( 91,92 )
+       !      !point to component materials data bases
+       !      matsl(2,il)%p => pmats(mat%matdef(4))%p  !matm
+       !      matsl(3,il)%p => pmats(mat%matdef(5))%p  !matf
+       !    CASE DEFAULT
+       !      NULLIFY( matsl(2,il)%p )
+       !      NULLIFY( matsl(3,il)%p )
+       !    END SELECT
+       !  END DO
+       !END IF
+       !osec = -1                              !recompute constants
+     END IF
+     newmt = .FALSE.               !same material than previous ?
+
+   END IF !newmt
+
+   x(:,1:nnode) = coora(:,e%lnods(1:nnode))     !nodes of the element
+   IF( quad )THEN  !for quadratic approach
+     DO i=1,3
+       sides(i) = e%lnods(i+6) /= 0
+       IF( sides(i) )THEN   !if side element exists
+         x(:,i+6:i+9:3) = coora(:,e%lnods(i+6:i+9:3))  !get extra nodes coordinates
+       ELSE                              !else
+         x(:,i+6:i+9:3) = 0d0                          !nullify
+       END IF
+     END DO
+     ! compute in-plane gradient at each mid-side point of upper and lower faces
+
+     IF( mtype == 6) cq = 0d0  ! initializes average in-plane metric tensor at each face
+     DO ii=1,2 ! for each face
+       i = 3*ii-2      !first node of the face
+       j = i+5         !auxiliar
+       DO jj=1,3  !for each mid side point
+         tq(:,1:2,jj,ii) = MATMUL(x(:,i:i+2),e%cdq(1:3,1:2,jj,ii))  !main element contribution
+         IF( sides(jj) )THEN                     !add extra node contribution if exist
+           tq(:,1,jj,ii) = tq(:,1,jj,ii) + x(:,j+jj)*e%cdq(4,1,jj,ii)
+           tq(:,2,jj,ii) = tq(:,2,jj,ii) + x(:,j+jj)*e%cdq(4,2,jj,ii)
+         END IF
+         IF( mtype == 6 )THEN
+           cq(1,ii) = cq(1,ii) + DOT_PRODUCT(tq(:,1,jj,ii),tq(:,1,jj,ii)) !C11
+           cq(2,ii) = cq(2,ii) + DOT_PRODUCT(tq(:,2,jj,ii),tq(:,2,jj,ii)) !C22
+           cq(3,ii) = cq(3,ii) + DOT_PRODUCT(tq(:,1,jj,ii),tq(:,2,jj,ii)) !C12
+         END IF
+       END DO
+     END DO
+     IF( mtype == 6) cq = cq/3d0               !average metric tensor at faces
+     CALL bmat16q(e%cdq,bq,tq) !in-plane b-matrix at faces
+   END IF
+
+   IF( bbar )THEN
+     bb = 0d0      !
+     dvol = 0d0
+   END IF
+
+   IF( shell ) THEN !compute transvere shear strain matrices
+     DO k=1,2      ! for each sampling point in zeta direction
+       DO i=1,nassp   !for each assumed strain point
+         tas(:,i) = MATMUL(x(:,1:nnode),e%nfdas(:,i,k))  !der x/x_3
+         gas(:,i) = MATMUL(x(:,1:nnode),  nfnda(:,i,k))  !der x/tan
+       END DO
+       CALL bsma16(nnode,nassp,gas,tas,e%nfdas(:,:,k),nfnda(:,:,k),bs(:,:,:,k)) !compute B_s matrix at sampling points
+       IF( mtype == 6 )THEN      !for rubbers only, compute Cauchy-Green transverse shear strain components
+         DO i=1,nassp  !for each assumed strain point compute x_tan . x_X_3
+           vas(i,k) = DOT_PRODUCT(tas(:,i),gas(:,i))
+         END DO
+       END IF
+     END DO
+   END IF
+
+   ! Integration loop
+   stiff = 0d0              !initializes stiffness matrix
+
+   g = 0                !initializes Gauss-point counter
+   DO l=1,ngaud             !for each integration point in zeta direction
+     DO k=1,ngaup             !for each in-plane integration point
+       g = g + 1                !update GP
+       voli = e%dvol(g)         !gauss point volume
+       t = MATMUL(x(:,1:nnode),e%cartd(:,:,g))  !deformation gradient at gauss point
+       IF( shell )THEN
+         CALL bmat16(e%cartd(:,:,g),bmatx,t,nnode,nassp,quad,shell,bq, &
+                     sh(:,l),bs,e%jacin(:,:,g),pag(:,:,k))
+       ELSE IF( quad )THEN
+         CALL bmat16(e%cartd(:,:,g),bmatx,t,nnode,nassp,quad,shell,bq, &
+                     sh(:,l))
+       ELSE
+         CALL bmat16(e%cartd(:,:,g),bmatx,t,nnode,nassp,quad,shell,bq)
+       END IF
+       ! compute point constitutive matrix (tangent algorithmic)
+       IF( nlayr == 0 )THEN
+         SELECT CASE (mtype)
+         CASE ( 1 )   ! for an isotropic one component material
+           !IF( .NOT.elast )THEN
+           !  lambd = e%gausv(14,g)         !Increment in Total Eff. plastic strain
+           !  efpst = e%gausv(7,g) + lambd  !Total Eff. plastic strain
+           !ELSE
+             lambd = 0d0
+             efpst = 0d0
+           !END IF
+           CALL modp18(d,young,poiss,propi,efpst,lambd,bbar,elast,newmt)
+           !IF( natst )THEN
+           !  ! Compute Metric tensor
+           !  stran(1) = DOT_PRODUCT(t(:,1),t(:,1))
+           !  stran(2) = DOT_PRODUCT(t(:,2),t(:,2))
+           !  stran(3) = DOT_PRODUCT(t(:,3),t(:,3))
+           !  stran(4) = DOT_PRODUCT(t(:,1),t(:,2))
+           !  stran(5) = DOT_PRODUCT(t(:,1),t(:,3))
+           !  stran(6) = DOT_PRODUCT(t(:,2),t(:,3))
+           !  ! inverse of U^2
+           !  a1  = stran(2)*stran(3) - stran(6)*stran(6)
+           !  a2  =-stran(4)*stran(3) + stran(5)*stran(6)
+           !  a3  = stran(4)*stran(6) - stran(5)*stran(2)
+           !  aux1 = stran(1)*a1 + stran(4)*a2 + stran(5)*a3
+           !  !IF(aux1 == 0d0) CALL runend('STIF18, singular matrix ')
+           !  u2(1) = a1/aux1
+           !  u2(2) = ( stran(1)*stran(3) - stran(5)*stran(5))/aux1
+           !  u2(3) = ( stran(1)*stran(2) - stran(4)*stran(4))/aux1
+           !  u2(4) = a2/aux1
+           !  u2(5) = a3/aux1
+           !  u2(6) = (-stran(1)*stran(6) + stran(4)*stran(5))/aux1
+           !
+           !ELSE  !small strain
+             cm      = d
+           !END IF
+         CASE ( 6 )   !
+           ! Compute Metric tensor
+           IF( quad )THEN !interpolate from lower and upper surfaces
+             stran(1) = sh(1,l)*cq(1,1) + sh(2,l)*cq(1,2)              !U^2(1,1)
+             stran(2) = sh(1,l)*cq(2,1) + sh(2,l)*cq(2,2)              !U^2(2,2)
+             stran(4) = sh(1,l)*cq(3,1) + sh(2,l)*cq(3,2)              !U^2(1,2)
+           ELSE
+             stran(1) = DOT_PRODUCT(t(:,1),t(:,1))                     !U^2(1,1)
+             stran(2) = DOT_PRODUCT(t(:,2),t(:,2))                     !U^2(2,2)
+             stran(4) = DOT_PRODUCT(t(:,1),t(:,2))                     !U^2(1,2)
+           END IF
+           ! out-of-plane components
+           stran(3) = DOT_PRODUCT(t(:,3),t(:,3))                       !U^2(3,3)
+           IF( shell )THEN  !shell version
+             staux(1:2) = MATMUL(pag(:,:,k),vas(:,l))
+             !IF( nassp == 3 )THEN
+             !  !staux(3) = SUM(vas(:,l))/3d0                               !auxiliar value
+             !  !staux(1) = -staux(3) + vas(1,l)                            !natural xita-x_3
+             !  !staux(2) = +staux(3) - vas(3,l)                            !natural eta-x_3
+             !ELSE  !nassp = 8
+             !  staux(1:2) = MATMUL(pag(:,:,k),vas(:,l))
+             !END IF
+             stran(5) = e%jacin(1,1,g)*staux(1)+e%jacin(2,1,g)*staux(2) !x_1-x_3
+             stran(6) = e%jacin(1,2,g)*staux(1)+e%jacin(2,2,g)*staux(2) !x_2-x_3
+           ELSE  !standard version
+             stran(5) = DOT_PRODUCT(t(:,1),t(:,3))                     !U^2(1,3)
+             stran(6) = DOT_PRODUCT(t(:,2),t(:,3))                     !U^2(2,3)
+           END IF
+           CALL rubber3d(propi,stran,mat%matdef(8),mat=daux)
+           daux = daux*voli
+         CASE DEFAULT !(5)
+           cm      = d
+         END SELECT
+       ELSE
+         cm      = d
+       END IF
+
+       IF( nlayr == 0 .AND. mtype /= 6 )THEN
+         ! scale D matrix
+         ii = 0
+         DO i=1,nstre
+           DO j=i,nstre
+             ii = ii+1
+             daux(ii) = voli*cm(i,j)
+           END DO
+         END DO
+       END IF
+       CALL btdbpr(bmatx(1,1,1),daux(1),stiff(1),nvarl,nstre) ! B^T D B
+       ! compute volumetric matrix
+       IF( bbar ) THEN
+         CALL bbar16(nnode,e%cartd(:,:,g),bb(:,:,k),t,voli)
+         dvol(k) = dvol(k) + voli
+       END IF
+       ! add geometric stiffness
+       !stres = e%stint(:,g)*voli
+       !CALL kgmm16(e%cartd(:,:,g),stres,stiff,nnode,nn,quad,shell)
+       IF( quad ) CALL kgmm16q(e%cdq,sh(:,g),stres,stiff,nn)
+       ! Kg for transverse shear not checked nor important
+       !IF( shell) CALL kgmm16t(e%nfdas(:,:,g),sh(:,g),stres(5:6),e%jacin(:,:,g),stiff,nn)
+       IF( ngaus == 7 .AND. g == 4 )EXIT
+     END DO
+   END DO
+   IF( bbar )THEN  !add volumetric part
+     DO k=1,ngaup
+       aux1 = km/dvol(k)
+       CALL btdbpr(bb(1,1,k),aux1,stiff(1),nvarl,1)
+     END DO
+   END IF
+   ! add to global stiffness
+   CALL stiaux(nn,e%lnods,nvarl,ndime,stiff(1),force(1),gstif(1) )
+   !k = 0
+   !DO i=1,nvarl
+   !  DO j=1,i-1
+   !    kmat(i,j) = kmat(j,i)
+   !  END DO
+   !  DO j=i,nvarl
+   !    k = k + 1
+   !    kmat(i,j) = stiff(k)
+   !  END DO
+   !END DO
+   !WRITE(58,"(45(e19.12,','))")((kmat(i,j),i=1,nvarl),j=1,nvarl)
+
+   e => e%next
+ END DO
+ DEALLOCATE (stiff,bmatx,bb,x)
+ IF(quad) DEALLOCATE (bq,tq,cq)
+ RETURN
+
+ END SUBROUTINE stif16

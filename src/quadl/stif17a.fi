@@ -1,0 +1,134 @@
+ SUBROUTINE stif17a(heade, gstif, force, coora, ngaus,nnode, epsi)
+
+ IMPLICIT NONE
+                               !--------- to optimize ---------
+ INTEGER (kind=4), PARAMETER :: ndime =2
+ INTEGER (kind=4), INTENT(IN) :: ngaus,nnode
+ REAL (kind=8), INTENT(IN) :: coora(:,:),epsi
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:),force(:)
+ TYPE (ele17), POINTER :: heade
+
+ !Local Variables
+ REAL(kind=8), PARAMETER :: as = 1d-3
+ LOGICAL :: natst
+ TYPE (ele17), POINTER :: e
+ LOGICAL  :: newmt,found
+ INTEGER (kind=4) :: ielem,isec,i,j,g,k,l,nstre,   &
+                     osec,mtype,ng,nvarl
+
+ REAL (kind=8) x(2,nnode),t(2,2),                             &
+               bmatx(ndime,nnode,3),daux(6),                  &
+               thick,stres(4),c(4),d(3,3),                    &
+               stran(3),voli,u2(3),fac,                       &
+               cm(3,3),lambd,nu,nu2,nu4,nu12,                 &
+               p(3,3),qp(3,3),theta,ue,er(3,3),               & !P matrix
+               st, ct, ss, ssc, cc, ccc, s2, s2c, c2, s4,     & !aux vaulues for P
+               ep(3),r(3),dif
+
+ REAL (kind=8) :: stiff(136)      !36 = nvarl*(nvarl+1)/2
+ REAL(kind=8) :: none(nnode),rnone
+
+ TYPE (section), POINTER :: sec
+ TYPE (mater), POINTER :: mat
+
+ !***  Compute Element Stiffness matrix for all elements
+
+ osec = -1
+ e => heade
+ nstre = 3
+ nvarl = ndime * nnode
+ ue = 1d0-epsi
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = e%numel
+   isec = e%matno
+   newmt = osec /= isec
+   IF(newmt)THEN                     !if new material, get properties
+     sec => psecs(isec)%p
+     mat => sec%mtbas
+     osec = isec                    !keep present material
+     thick = sec%rprop(1)           ! original thickness
+     nu = mat%prope(2)              !poisson ratio
+     nu2 = nu/2d0                   !aux value
+     nu4 = nu/4d0                   !aux value
+     nu12 = (1d0-nu)/2d0            !aux value
+     c(1:4) = mat%prope(7:10)       ! plane stress elasticity matrix
+     d = RESHAPE( (/ c(1),c(2),0d0, c(2),c(3),0d0, 0d0, 0d0, c(4) /),(/3,3/))
+   END IF
+
+   x = coora(:,e%lnods)     !nodes of the element
+
+   ! Integration loop
+   stiff = 0d0
+
+   DO g=1,ngaus
+     voli = e%dvol(g)
+     ! compute point constitutive matrix (tangent algorithmic)
+     t = MATMUL(x,e%cartd(:,:,g))  !deformation gradient
+      fac = e%gausv(1,g)
+      IF( fac > 1.001 )THEN        ! taut
+        cm = d
+      ELSE IF ( fac >= 0.0d0 ) THEN ! wrinkled
+        theta = e%gausv(2,g)
+        ep = e%gausv(3:5,g)
+        st = SIN(theta)   !sin(theta)
+        ct = COS(theta)   !cos(theta)
+        ss = st*st        !sin^2(theta)
+        ssc= ss*ss        !sin^4(theta)
+        cc = 1d0-ss       !cos^2(theta)
+        ccc= cc*cc        !cos^4(theta)
+        s2 = 2d0*st*ct    !sin(2theta)
+        s2c=s2*s2         !sin^2(2theta)
+        c2 = cc-ss        !cos(2theta)
+        p(1,1:3) = (/     -ssc-nu4*s2c, -s2c/4d0-nu*ssc,    +nu12*ss*s2 /) ! -Q
+        p(2,1:3) = (/  -s2c/4d0-nu*ccc,    -ccc-nu4*s2c,    +nu12*cc*s2 /) ! -Q
+        p(3,1:3) = (/    (ss+nu*cc)*s2,   (cc+nu*ss)*s2,      -nu12*s2c /) ! -Q
+        p=p*(1d0-fac)
+        p(1,1) = 1d0 + p(1,1)
+        p(2,2) = 1d0 + p(2,2)
+        p(3,3) = 1d0 + p(3,3)
+        !dif = ep(1)-ep(2)
+        !IF( ABS(dif) > 1D-12 )THEN   !different cartesyan strains (include P derivative)
+        !  r(1) =  ep(2)/dif**2     !theta derivative
+        !  r(2) = -r(1)
+        !  r(3) = 1d0/dif
+        !  r = r*c2*c2/2d0          !include factor cos^2(2theta)
+        !  s4 = SIN(4d0*theta)      !sin(4theta)
+        !  qp(1:3,1) = (/              2d0*ss*s2+nu2*s4,            s4/2d0+2d0*nu*ss*s2, -nu12*( s2c+2d0*ss*c2) /)
+        !  qp(1:3,2) = (/           s4/2d0-2d0*nu*cc*s2,              -2d0*cc*s2+nu2*s4, -nu12*(-s2c+2d0*cc*s2) /)
+        !  qp(1:3,3) = (/(nu-1d0)*s2c-2d0*(ss+nu*cc)*c2, (1d0-nu)*s2c-2d0*(cc+nu*ss)*c2,            (1d0-nu)*s4 /)
+        !  er = MATMUL(RESHAPE(ep,(/3,1/)),RESHAPE(r,(/1,3/)))    !eps x r (tensorial product)
+        !  qp = MATMUL(qp,er)
+        !  cm = MATMUL(d,p-qp)
+        !ELSE                        !same cartesyan strains (do not include P derivative)
+           cm = MATMUL(d,p)
+        !END IF
+      ELSE                    ! slackled
+        cm = d*MAX(epsi,(-2d0*fac-1d0))
+      END IF
+     ! scale D matrix
+     k = 0
+     DO i=1,nstre
+       DO j=i,nstre
+         k = k+1
+         daux(k) = voli*cm(i,j)
+       END DO
+     END DO
+
+     ! strain-displacement matrix
+     CALL bmat17(e%cartd(:,:,g),bmatx,t,nnode,rnone,none,1)
+     CALL btdbpr(bmatx(1,1,1),daux(1),stiff(1),nvarl,nstre)
+
+     ! geometric stiffness
+     stres = e%stint(:,g)*voli
+     CALL kgmm17(e%cartd(:,:,g),stres,stiff,1,rnone,none,nnode)
+   END DO
+   ! add to global stiffness matrix
+   CALL stiaux(nnode,e%lnods,nvarl,2,stiff(1),force(1),gstif(1) )
+
+   e => e%next
+ END DO
+
+ RETURN
+
+ END SUBROUTINE stif17a

@@ -1,0 +1,135 @@
+ SUBROUTINE resv03(heade,coora,euler,resid,energ,istop, &
+                   bottom,top,coorb,coort,ifact,ttime,stabq,quad,nstre,zigzag)
+ !********************************************************************
+ !
+ !***   evaluation of integral (b)**t*(sigma) for shell elements
+ !
+ !********************************************************************
+ USE npo_db, ONLY : psia,label,naeul
+ USE ctrl_db, ONLY : npoin
+ IMPLICIT NONE
+
+ LOGICAL, INTENT(IN) :: bottom,top  !flags for top and bottom surface computation
+ LOGICAL, INTENT(IN) :: quad  !
+ INTEGER (kind=4), INTENT(IN) :: nstre
+ INTEGER (kind=4), INTENT(OUT) :: istop,    & !flag for error detection
+                               ifact(:)       !weigths for surface computation
+ REAL(kind=8),INTENT (IN) :: coora(:,:),    & !present coordinates
+                             euler(:,:),    & !present total time
+                             ttime,         & !present total time
+                             stabq            !shear stabilization factor
+ REAL(kind=8),INTENT (IN OUT) :: resid(:,:),& !internal nodal forces
+                                 energ(:),  & !bottom surface coordinates
+                                 coorb(:,:),& !bottom surface coordinates
+                                 coort(:,:)   !top surface coordinates
+ TYPE (ele03), POINTER  :: heade              !pointer to first element
+ LOGICAL, INTENT(IN) :: zigzag
+
+ INTEGER (kind=4) ielem,isec,i,j,l,m,n,matty,nlayr,osec,np,secty,ni,ndofe
+ LOGICAL ::  plast
+
+ REAL (kind=8), ALLOCATABLE :: bmsig(:,:)
+ REAL    (kind=8) thick,x(3,6),t(3,3),lb(3,2,3),thico,tgp(3),ds,psi(2,3),sf(3)
+ TYPE(ele03), POINTER :: e
+ TYPE(section), POINTER :: sec
+ TYPE(mater), POINTER :: mat
+ INTEGER(kind=4), PARAMETER :: is(3,3) =(/ 2,3,1, 3,1,2, 1,2,3 /)
+
+ !***  loop over all the elements
+ osec = -1
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED(e) )EXIT
+   !       zero the internal forces array
+   ielem = e%numel
+   isec = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     secty = sec%secty
+     matty = sec%secdef(3)
+     IF( sec%mabas > 0 )THEN
+       mat => sec%mtbas
+       plast = matty <= 2 .AND. mat%matdef(3) > 1
+       nlayr = sec%iprop(1)
+     ELSE     !for sectyp = 15
+       plast = .FALSE.
+       nlayr = 1          !integrated
+     END IF
+     thico = sec%rprop(1)
+     IF(matty == 0)THEN  !layered isotropic
+       np = 12
+       ds = sec%rprop(10)*thico
+     ELSE                !in therms of forces and moments
+       np = 21
+       ds = sec%rprop(12)
+       IF(matty == 5)THEN
+         IF(sec%rprop(4) /= 0d0 )THEN
+           sf = sec%rprop(4)
+         ELSE
+           sf = sec%rprop(71:73)
+         END IF
+       END IF
+     END IF
+     np = MIN(np,sec%secdef(2)) !avoids problems in debug
+     osec = isec
+     ndofe = 5
+     IF( secty == 15 .AND. zigzag )ndofe = 7
+     IF( ALLOCATED(bmsig) )DEALLOCATE (bmsig)
+     IF( quad ) THEN
+       ALLOCATE( bmsig(ndofe,6))
+     ELSE
+       ALLOCATE( bmsig(ndofe,3))
+     END IF
+   END IF
+
+   !     gathers the actual coordinates and directors
+   x(:,1:3)  = coora(:,e%lnods(1:3))
+   lb(:,1,:) = euler(1:3,e%lnods(4:6))
+   lb(:,2,:) = euler(4:6,e%lnods(4:6))
+   t  = euler(7:9,e%lnods(4:6))
+   IF(quad)THEN
+     DO m =1,3                       !for the side nodes in the patch
+       i = m+3                       !associated node
+       ni = e%lnods(i+3)               !node number
+       IF(ni > 0) x(1:3,i) = coora(1:3,ni)    !get original coordinates of adjacent node
+     END DO
+   END IF
+   IF( ASSOCIATED(e%nangl) )THEN
+     DO n=1,3
+       l = e%lnods(n)
+       psi(1,n) = psia(1,l)*e%nangl(1,n)+psia(2,l)*e%nangl(2,n)
+       psi(2,n) = psia(2,l)*e%nangl(1,n)-psia(1,l)*e%nangl(2,n)
+     END DO
+   END IF
+   thick = thico
+   bmsig = 0d0
+   CALL intr03(ndofe,nstre,plast, matty,nlayr,sec%rprop(6:),sec%rprop(np:), &
+               sf,x,t,lb,tgp,                                     &
+               e%dvolu,e%cartd,e%jacin,e%cd,e%mems,               &
+               e%stra0,e%gamm0,e%strsg,e%qbar,psi,e%nangl,e%jas,  &
+               e%ambda,e%ehist,e%strap,e%stres,                   &
+               bmsig,energ,thick,istop,ielem,stabq,quad,ds)
+   DO n=1,3
+     l = e%lnods(n)
+     m = e%lnods(n+3)
+     resid(1:3,l) = resid(1:3,l) + bmsig(1:3,n)
+     resid(4:5,m) = resid(4:5,m) + bmsig(4:5,n)
+     IF(quad)THEN
+       ni = e%lnods(n+6)               !node number
+       IF(ni > 0) resid(1:3,ni) = resid(1:3,ni) + bmsig(1:3,n+3)
+     END IF
+     IF(zigzag)resid(7:8,l) = resid(7:8,l) + bmsig(6:7,n)
+   END DO
+   IF(top .OR. bottom)THEN
+     DO n=1,3
+       l = e%lnods(n)
+       IF( top  )coort(:,l) = coort(:,l) + tgp*thick
+       IF(bottom)coorb(:,l) = coorb(:,l) - tgp*thick
+       ifact(l) = ifact(l) + 2
+     END DO
+   END IF
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE resv03

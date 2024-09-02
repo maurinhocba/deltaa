@@ -1,0 +1,69 @@
+ SUBROUTINE kgsh03(nvarl,q,x,t,lb,stiff)
+ !******************************************************************************
+ !
+ !     this routine compute the geometric stifness due to shear stresses
+ !     for the asummed shear strain shell element TLLL
+ !
+ !******************************************************************************
+ IMPLICIT NONE
+ !                  routine parameters
+ INTEGER (kind=4), INTENT(IN) :: nvarl
+ REAL (kind=8), INTENT(IN) :: q(:),x(:,:),t(:,:),lb(:,:,:)
+ REAL (kind=8), INTENT(IN OUT) :: stiff(:)
+ !                  local variables
+ INTEGER (kind=4) i,j,k,ni,nj,poses,idof,jdof,kdofr
+ REAL    (kind=8) ckgeo,coef1,coef2,dx(3)
+ !     local functions
+ INTEGER (kind=4)  poesti
+ poesti(i,j,k) = (2*k-i)*(i-1)/2+j    ! position i,j in estif(kxk)
+
+ !     for every assumed strain point
+ DO k = 1,ngamm
+   !           evaluates the configuration derivative in side direction
+   ni = hh(3,k)
+   nj = hh(2,k)
+   dx = x(:,nj) - x(:,ni)
+   !           for every node (row)
+   idof = (ni-1)*5   !traslational DOF
+   jdof = (nj-1)*5   !traslational DOF
+   kdofr= 5*k-2      !(k-1)*5 + 3       !initial rotaional DOF i
+   !                  delta t(k)  with delta t(k)
+   ckgeo = - DOT_PRODUCT(dx,t(:,k))*q(k)
+   DO i = 1,2
+     poses = poesti(kdofr+i,kdofr+i,nvarl)
+     stiff(poses) = stiff(poses) + ckgeo
+   END DO
+   !                  delta u(i)  with delta t(k)
+   ckgeo = +q(k)
+   DO j=1,3 !ndime
+     coef1 = q(k)*lb(j,2,k)
+     coef2 = q(k)*lb(j,1,k)
+     !  node i
+     IF( idof < kdofr )THEN
+       poses = poesti(idof+j,kdofr+1,nvarl)
+       stiff(poses) = stiff(poses) + coef1
+       poses = poses + 1
+       stiff(poses) = stiff(poses) - coef2
+     ELSE
+       poses = poesti(kdofr+1,idof+j,nvarl)
+       stiff(poses) = stiff(poses) + coef1
+       poses = poesti(kdofr+2,idof+j,nvarl)
+       stiff(poses) = stiff(poses) - coef2
+     END IF
+     !  node j
+     IF( jdof < kdofr )THEN
+       poses = poesti(jdof+j,kdofr+1,nvarl)
+       stiff(poses) = stiff(poses) - coef1
+       poses = poses + 1
+       stiff(poses) = stiff(poses) + coef2
+     ELSE
+       poses = poesti(kdofr+1,jdof+j,nvarl)
+       stiff(poses) = stiff(poses) - coef1
+       poses = poesti(kdofr+2,jdof+j,nvarl)
+       stiff(poses) = stiff(poses) + coef2
+     END IF
+   END DO
+
+ END DO                         !k=1,ngamm
+
+ END SUBROUTINE kgsh03

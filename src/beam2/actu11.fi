@@ -1,0 +1,38 @@
+ SUBROUTINE actu11(heade,nstre,ngaus)
+
+ IMPLICIT NONE
+ TYPE(ele11), POINTER :: heade
+ INTEGER (kind=4) :: nstre,ngaus
+
+ INTEGER (kind=4) :: isec,nlayr,l,g,osec,nv
+
+ TYPE(ele11), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL :: found,plast
+
+ nv = nstre/2
+ osec = -1
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED(e) ) EXIT
+   isec = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     CALL sect_search(isec,found,sec)
+     plast = sec%mtbas%matdef(3) > 1
+     nlayr = sec%iprop(1)
+     osec = isec
+   END IF
+   IF( plast ) THEN   !Yield must be > zero
+     DO g=1,ngaus
+       DO l=1,nlayr
+         IF( e%gausv(nv+1,l,g,1) == 0d0 )CYCLE
+         e%gausv(1:nv,l,g,2) = e%gausv(1:nv,l,g,1)
+         e%gausv(nv+1,l,g,2) = e%gausv(nv+1,l,g,2) + e%gausv(nv+1,l,g,1)
+       END DO
+      END DO
+   END IF
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE actu11

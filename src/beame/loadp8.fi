@@ -1,0 +1,51 @@
+      SUBROUTINE loadp8(ndime,ndofn,nelem,loadf,gvect,gravy, &
+     &                  nnode,ngaus,axesc,heade,shape,weigh)
+!********************************************************************
+!
+!***  evaluates gravity and line loads for beam elements
+!
+!********************************************************************
+      IMPLICIT NONE
+
+      INTEGER (kind=4) :: ndime,ndofn,nelem,nnode,ngaus,axesc
+      REAL    (kind=8) :: loadf(:,:),gvect(ndime),gravy, &
+                          shape(:,:),weigh(:)
+      TYPE(ele08), POINTER :: heade
+!        local variables
+
+      INTEGER (kind=4) ielem,g,l,n,isec,osec
+      REAL    (kind=8) weigt,auxvl,dvolu,a(nnode)
+
+      TYPE(ele08), POINTER :: e
+      TYPE(section), POINTER :: sec
+
+      e => heade
+      osec = -1
+        DO ielem=1,nelem
+          isec = e%matno
+          IF( isec /= osec )THEN             !present and previous material diff
+            sec => psecs(isec)%p
+            weigt = gravy*sec%rprop(1)
+            osec  = isec
+          END IF
+
+          a(1:nnode) = 0d0
+
+          DO g=1,ngaus
+            dvolu = weigh(g)*e%jac(g)
+            DO n=1,nnode
+              a(n) = a(n) + shape(n,g)*dvolu
+            END DO
+          END DO
+
+          DO n=1,nnode
+            auxvl = weigt*a(n)
+            l = e%lnods(n)
+            loadf(1:ndime,l) = loadf(1:ndime,l) + auxvl*gvect(1:ndime)
+          END DO
+
+        END DO
+
+
+      RETURN
+      END SUBROUTINE loadp8

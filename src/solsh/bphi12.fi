@@ -1,0 +1,44 @@
+ SUBROUTINE bphi12 (area,cd,bt,bp,nangl,ji)
+ ! compute Strain-displacement matrix for transverse shear
+ ! at assumed strain points for SPRISM  solid-shell element 12 (6 nodes)
+ IMPLICIT NONE
+ REAL (kind=8), INTENT(IN) :: area,cd(3,2),ji(2,2),nangl(2,3)
+ REAL (kind=8), INTENT(OUT) :: bt(2,3,2),bp(2,3,4)
+
+ INTEGER (kind=4) :: i
+ REAL (kind=8) :: b(2,3,2),ba(2,2)
+
+ ! Bt_phi matrix for Natural coordinates
+ b(1,1,1) =  cd(1,2)/3d0 + cd(3,2)
+ b(2,1,1) = -cd(1,1)/3d0 - cd(3,1)
+
+ b(1,2,1) =  cd(2,2)/3d0 + cd(3,2)
+ b(2,2,1) = -cd(2,1)/3d0 - cd(3,1)
+
+ b(1,3,1) =  cd(3,2)/3d0
+ b(2,3,1) = -cd(3,1)/3d0
+
+
+ b(1,1,2) = -cd(1,2)/3d0 - cd(2,2)
+ b(2,1,2) =  cd(1,1)/3d0 + cd(2,1)
+
+ b(1,2,2) = -cd(2,2)/3d0
+ b(2,2,2) =  cd(2,1)/3d0
+
+ b(1,3,2) = -cd(3,2)/3d0 - cd(2,2)
+ b(2,3,2) =  cd(3,1)/3d0 + cd(2,1)
+
+ DO i=1,3
+   ! Bt_phi matrix for Cartesyan local coordinates
+   ba(:,:) = MATMUL(b(:,i,:),ji)*area
+   ! Bt_phi matrix for Cartesyan nodal coordinates
+   bt(1,i,:) = nangl(1,i)*ba(1,:)+nangl(2,i)*ba(2,:)  !transform to nodal system
+   bt(2,i,:) =-nangl(2,i)*ba(1,:)+nangl(1,i)*ba(2,:)
+   ! Bp_phi matrix for Cartesyan nodal coordinates
+   bp(:,i,1) = cd(i,1)*nangl(:,i)
+   bp(:,i,2) = cd(i,2)*(/-nangl(2,i),nangl(1,i)/)
+   bp(:,i,3) = cd(i,2)*nangl(:,i)
+   bp(:,i,4) = cd(i,1)*(/-nangl(2,i),nangl(1,i)/)
+ END DO
+ RETURN
+ END SUBROUTINE bphi12

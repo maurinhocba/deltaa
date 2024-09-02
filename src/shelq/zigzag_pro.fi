@@ -1,0 +1,129 @@
+ SUBROUTINE zigzag_pro(prop,iprop,thick,st,dir,first,delta)
+ IMPLICIT NONE
+ !dummy arguments
+ !TYPE (section), POINTER :: sec  !pointer to a section data
+ REAL(kind=8), INTENT(IN) :: st(:,:), & !strains(1:14,1:4)
+                             delta,   & !coordinate increment along "dir"
+                             prop(:), & !layer properties
+                             thick      !shell thickness
+ INTEGER(kind=4), INTENT(IN) :: dir,iprop(:)
+ LOGICAL, INTENT(IN) :: first
+ !local variables
+ TYPE (mater), POINTER :: mat
+ INTEGER(kind=4) :: i,nl,j,ip,ii
+ REAL(kind=8) :: e(3),z,d(3),celoc(6),ce(9),t,tt(2),strp(14),rr
+ REAL(kind=8), ALLOCATABLE :: sx(:,:),tx(:,:),beta(:,:),phi(:,:),rprop(:,:),zc(:,:),ahf(:,:)
+ REAL(kind=8), DATA :: sxo(0:51,2) = 0d0, txo(51,2) = 0d0
+
+
+ nl = iprop(1)
+ ALLOCATE( sx(0:nl,2),tx(nl,2),beta(2,nl),phi(2,0:nl),rprop(9,nl),zc(0:nl,2),ahf(0:nl,2))
+ CALL vecasi (2*nl+2,prop(1),phi)      ! phi
+ j = 3+2*nl
+ CALL vecasi (2*nl,prop(j),beta)         ! beta
+ j = j+2*nl
+ CALL vecasi (9*nl,prop(j),rprop)        ! other data
+ j = j+9*nl
+ CALL vecasi (2*nl+2,prop(j),ahf)        ! ad-hoc fucntinos for shear
+
+ ii=5                                    ! point to first material
+ ip = iprop(ii)
+ mat => pmats(ip)%p                         !point to material
+ CALL elastiff(celoc,mat,4)                 !get elastic stiffnes matrix 5=3D Solid Principal directions
+ CALL rotortm(celoc,rprop(4:,1),ce,.TRUE.)  !rotate elastic in-plane matrix ==> ce(5,5) (1:6,7:9)
+ IF( dir == 1 )THEN
+   d = ce((/ 1,2,3 /))
+ ELSE
+   d = ce((/ 4,2,5 /))
+ END IF
+ DO i=1,14                    !   1    2    3    4    5    6    7    8    9   10   11   12  13  14
+   strp(i) = SUM(st(i,:))/4d0 ! E11, E22, E12, C11, C22, C12, G13, G23, F11, F22, F12, F22, F1, F2
+ END DO
+ z = -thick/2d0
+ sx = 0d0
+ DO i=0,nl
+   IF( i > 0 )THEN
+     z = z + rprop(1,i)/2d0
+     rr = (ahf(i,dir)+ahf(i-1,dir))/2d0
+     IF( dir == 1) THEN
+       tx(i,1) = (beta(1,i)+1d0)*strp(13)*ce(7)  !tau-b
+       !tx(i,2) = (strp(7)-strp(13))*ce(7)        !tau-c
+       tx(i,2) = (strp(7)-strp(13))*rr           !Dtau
+     ELSE
+       tx(i,1) = (beta(2,i)+1d0)*strp(14)*ce(9)  !tau-b
+       !tx(i,2) = (strp(8)-strp(14))*ce(9)        !tau-c
+       tx(i,2) = (strp(8)-strp(14))*rr           !Dtau
+     END IF
+     zc(i,2) = z
+     z = z + rprop(1,i)/2d0
+   END IF
+   zc(i,1) = z
+   e(1) = strp(1) + strp(4)*z + strp( 9)*phi(1,i)                      !E11
+   e(2) = strp(2) + strp(5)*z + strp(10)*phi(2,i)                      !E22
+   e(3) = strp(3) + strp(6)*z + strp(11)*phi(1,i) + strp(12)*phi(2,i)  !E12
+   ! celoc(1:6) in plane values  celoc(7:9) shear values
+   sx(i,1) = DOT_PRODUCT(e,d)
+   IF( i > 0 .AND. i < nl) THEN
+     ii = ii+1                             !update material pointer
+     ip = iprop(ii)
+     mat => pmats(ip)%p                    !point to material
+     CALL elastiff(celoc,mat,4)            !get elastic stiffnes matrix 5=3D Solid Principal directions
+     CALL rotortm(celoc,rprop(4:,i+1),ce,.TRUE.)  !rotate elastic in-plane matrix ==> ce(5,5) (1:6,7:9)
+     IF( dir == 1 )THEN
+       d = ce((/ 1,2,3 /))
+     ELSE
+       d = ce((/ 4,2,5 /))
+     END IF
+     sx(i,2) = DOT_PRODUCT(e,d)
+   ELSE
+     sx(i,2) = sx(i,1)
+   END IF
+ END DO
+ IF( first )THEN
+   sxo(0:nl,1:2) = sx
+   txo(1:nl,1:2) = tx
+ ELSE
+!   DO i=0,nl
+!     WRITE(58,"(f10.4,e15.5)")zc(i,1)*1000,(sx(i,1) + sxo(i,1))/2d0
+!     IF( i > 0 .AND. i < nl) WRITE(58,"(f10.4,e15.5)")zc(i,1)*1000,(sx(i,2)+sxo(i,2))/2d0
+!   END DO
+!   sxo(0:nl,1:2) = (sxo(0:nl,1:2) - sx )/delta
+!   t = 0d0
+!   WRITE(58,"(/,2x,f10.4,e15.5)")zc(0,1)*1000,t
+!   DO i=1,nl
+!     z = zc(i,1) - zc(i-1,1)
+!     t = t + (sxo(i-1,2)+sxo(i,1))/2d0*z
+!     WRITE(58,"(2x,f10.4,1e15.5)")zc(i,1)*1000,-t
+!   END DO
+
+   DO i=0,nl
+     tt(1) = (sx(i,1) + sxo(i,1))/2d0
+     tt(2) = (sxo(i,1) - sx(i,1) )/delta
+     sx(i,1) = tt(1)
+     sxo(i,1) = tt(2)
+     tt(1) = (sx(i,2) + sxo(i,2))/2d0
+     tt(2) = (sxo(i,2) - sx(i,2) )/delta
+     sx(i,2) = tt(1)
+     sxo(i,2) = tt(2)
+   END DO
+
+   t = 0d0
+   WRITE(58,"('S_xx  S_xz_i')")
+   WRITE(58,"(2x,f10.4,2e15.5)")zc(0,1)*1000,sx(0,1),t
+   DO i=1,nl
+     z = zc(i,1) - zc(i-1,1)
+     t = t + (sxo(i-1,2)+sxo(i,1))/2d0*z
+     WRITE(58,"(2x,f10.4,2e15.5)")zc(i,1)*1000,sx(i,1),-t
+     IF( i < nl) WRITE(58,"(2x,f10.4,2e15.5)")zc(i,1)*1000,sx(i,2),-t
+   END DO
+   WRITE(58,"('S_xz_b S_xz_c')")
+   DO i=1,nl
+     tt(1) = (tx(i,1)+txo(i,1))/2d0
+     tt(2) = (tx(i,2)+txo(i,2))/2d0 + tt(1)
+     WRITE(58,"(f10.4,2e15.5)")zc(i,2)*1000,-tt
+   END DO
+ END IF
+
+
+ RETURN
+ END SUBROUTINE zigzag_pro

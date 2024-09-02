@@ -1,0 +1,810 @@
+ SUBROUTINE resv27( heade, coora, resid, ierr, ttime, small, ngaus, ansmm, &
+                    anssh, easts, nassp)
+ !-------------------------------------------------------------------
+ !
+ !          EVALUATION OF INTERNAL FORCES ELEMENT 27
+ !          T-L 3-D  Solid-Shell Bezier Prism
+ !
+ !-------------------------------------------------------------------
+
+ USE ele18_db, ONLY : lgst18,eige18,rubber3d
+ USE npo_db, ONLY : coori  !coordinates at previous iteration
+ !USE npo_db, ONLY : coord  !original coordinates  TEMP
+ IMPLICIT NONE
+
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(OUT) :: ierr        !flag for error detection
+ INTEGER (kind=4), INTENT(IN) :: ngaus,     & !number of integration points across the thickness
+                                 ansmm,     & !Assumed Natural Strain Membrane Model
+                                 anssh,     & ! Assumed Natural Strain SHear model
+                                 easts,     & ! Enhanced Assumed Strain Transverse strain
+                                 nassp        ! number of shear strains per face
+ REAL(kind=8),INTENT (IN) :: coora(:,:),    & !present coordinates
+                             ttime            !present total time
+ REAL(kind=8),INTENT (IN OUT) :: resid(:,:)   !internal nodal forces
+ TYPE (ele27), POINTER  :: heade              !pointer to first element
+ LOGICAL, INTENT(IN) :: small                 !.TRUE. if Green strains will be used
+
+ ! local variables
+ INTEGER (kind=4), PARAMETER :: ndime=3
+ TYPE (ele27), POINTER :: e      !pointer to an element data
+ LOGICAL :: newmt,   & ! TRUE if material constant computation necessary
+            elast,   & ! TRUE if material is elastic
+            plast      ! TRUE if plasticity is to be considered
+ INTEGER (kind=4) :: osec,     & !associated material of previous element
+                     numpt,    & !number of points in curve
+                     mtype       !associated material type
+ REAL (kind=8) ::  fr(9),      & !Flow rule coefficients
+                   km,gm,      & !bulk modulus and shear modulus
+                   eprop(12),  & !elastic Material properties
+                   props(7),   & !plastic Material properties
+                   thick,      & !thickness (original)
+                   minstr,     & !minimum strain to integrate trougth the thickness
+                   dm(36),     & !Elastic integrated constitutive matrix
+                   ch(6)         !Hill-48 coefficients
+
+ INTEGER (kind=4) ielem,             & !element number
+                  is,                & !isotropic hardening model
+                  isec,              & !associated material
+                  flag,              & !flag for eigen-decomposition
+                  face,gp,vert,      & !indexes
+                  i,jj,j,g,n           !different indexes
+
+ INTEGER (kind=4) nl,nlayr,  & !number of layers
+                  oldm,      & !old material label
+                  mate,      & !material label
+                  il,        & !layer index
+                  nvar         !total number of internal variables
+
+ REAL (kind=8) stral(6),   & !local strains
+               strel(6),   & !local streses
+               staux(6),   & !local streses auxiliar
+               str(6),     & !stresses (different measures)
+               sig(6),     & !stresses (different measures)
+               stran(6),   & !C=U^2  also Log strains
+               aux,voli,   & !auxiliar value
+               efpst,      & !effective plastic strain
+               strpl(6),   & !plastic strain (previous step)
+               r(3,3),lb(3),& !eigen-pair in local system
+               delta,      & !volumetric strain/3, element volume
+               press         !first stress invariant (mean pressure)
+ REAL (kind=8) :: u(ndime,nnode),          &  !incremental displacements
+                  x(ndime,nnode),          &  !element coordinates
+                  rl(ndime,nnode),         &  !nodal internal equivalent forces
+                  sem(3,nface),ses(2,nface),se3(ngaup,nface),semi(3,ngaup,nface),sesi(nassp,nface),deq(11), &
+                  de(35),ji(2,2),f(3,3)       !constitutive matrix, in-plane Jac, transformation matrix
+ ! variables for assumed in-plane strains
+ REAL (kind=8) :: cn(3,nface,3),           &  !natural FFF at each face and at each sampling point
+                  cq(3,nface,ngaup),       &  !metric tensor at each face at each gauss point
+                  tq(ndime,3,nface,ngaup), &  !local in-plane deformation gradient at face sides at each sampling point
+                  bm(ndime,nnode,3,ngaup,nface)   ! Bm matrix at Assumed strain Points
+ ! variables for assumed strain transverse shear
+ REAL (kind=8) :: tas(ndime,nassp,nface),      & ! der x/x_3 at Assumed Strain points
+                  gas(ndime,nassp,nface),      & ! der x/tan at Assumed Strain points
+                  cmas(nassp,nface),           & ! mixed strains at Assumed Strain Points
+                  ccas(2,nface,ngaup),         & ! cartesian shear strains at in-plane integration Points
+                  vas(2),                      & ! mixed shear strains at integration  Points
+                  bs(ndime,nnode,nassp,nface)    ! Bs matrix at Assumed strain Points
+ ! variables for Enhanced assumed normal strain
+ REAL (kind=8) f3(ndime),c33(ngaup,2),c33z,b3(ndime,nnode,ngaup,nface),d3(nstre),fac, &
+               h(ndime,nnode),ka,ralpha     !EAS
+
+ REAL (kind=8) :: thf(ngaus), wei(ngaus), shv(3,ngaus), shm(2,ngaus), shs(2,ngaus), sht(2,ngaus)   !thickness gauss integration
+
+ LOGICAL :: pflag,   &! TRUE if plastic flow in the step
+            ttti,    &! TRUE if Trougth The Thickness Integration is necessary
+            flag2     ! TRUE if plastic at any gauss point
+
+ REAL (kind=8), POINTER :: val(:,:) ! curve for IHPOINT
+
+ TYPE (section), POINTER :: sec  !pointer to a section data
+ TYPE (mater), POINTER   :: mat  !pointer to a material data
+
+ TYPE (pmater), POINTER :: matsl(:)    !array of pointers to materials data
+ ! allocatable arrays : MUST be replaced by any STATIC variables to avoid run-time memory increase
+ INTEGER (kind=4), ALLOCATABLE ::  lvari(:)
+ REAL (kind=8), ALLOCATABLE ::  thickl(:),zposl(:),rr(:,:)
+ REAL (kind=8), ALLOCATABLE :: varin(:,:,:)                      !internal variables
+
+
+ INTERFACE
+   INCLUDE 'corr18.h'
+ END INTERFACE
+
+ bm = 0d0  !(ndime,nnode,3,3,nface) initializes in-plane strain B matrix
+ !integration points through the thickness
+ CALL gaussq(ngaus,thf(1),wei(1))
+ ! compute sh?(2,ngaus) to interpolate different components in thickness direction
+ ! compute sh(3,ngaus) to evaluate jacobian from three surfaces
+ DO g=1,ngaus
+   ! this are quadratic Bezier for Jacobian computation
+   shv(1,g) = (1d0+thf(g)/gpzv(1))**2/4d0      !bottom
+   shv(2,g) = (1d0+thf(g)/gpzv(2))**2/4d0      !top
+   shv(3,g) = (1d0-(thf(g)/gpzv(2))**2)/2d0    !center
+   ! this are linear functions
+   shm(1,g) =  0.5d0*(1d0+thf(g)/gpzm(1))
+   shm(2,g) =  0.5d0*(1d0+thf(g)/gpzm(2))
+   shs(1,g) =  0.5d0*(1d0+thf(g)/gpzs(1))
+   shs(2,g) =  0.5d0*(1d0+thf(g)/gpzs(2))
+   IF( easts == 0 )THEN
+     sht(1,g) =  0.5d0*(1d0+thf(g)/gpzt(1))
+     sht(2,g) =  0.5d0*(1d0+thf(g)/gpzt(2))
+   END IF
+ END DO
+
+ !***  Computes nodal internal forces
+ osec = -1                           !no previous material
+ e => heade                          !point to first element in the list
+ DO                                  !loop over all the elements
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = e%numel                   !element number
+   isec = e%matno                    !associated material
+   !     SET MATERIAL CONSTANTS
+   newmt = osec /= isec              !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+     osec = isec                     !keep present material
+     sec => psecs(isec)%p             !point to section
+     nlayr = sec%iprop(1)             !number of layers
+     nvar  = sec%iprop(2)             !total number of internal variables
+
+     !************************** STANDARD SOLID *****************************************
+     IF( nlayr == 0 )THEN            !standard solid section (not layered)
+
+       mat => sec%mtbas                !point to associated material
+       mtype = mat%mtype               !type of base material
+       elast = mat%matdef(3) == 1      !elastic material
+       is    = mat%matdef(4)           !isotropic hardening model
+       ! ------------------------------------------------------------------------------------
+       ! ONLY MTYPES 1, 5, 6 ARE ALLOWED
+       SELECT CASE (mtype)
+       ! ------------------------------------------------------------------------------------
+       CASE (1)                        !Isotropic Elastic - Anisotropic Plastic  ( mtype == 1)
+         km = mat%prope(4)*3d0              ! bulk modulus * 3
+         gm = mat%prope(3)                  ! shear modulus
+         aux = (km - gm*2d0)/3d0            ! lambda (Lamé parameter)
+         d3 = (/ aux,aux,aux+2d0*gm, 0d0,0d0,0d0/)  ! Elastic column 3 of D
+         IF( .NOT.elast ) THEN
+           ! e1, nu1, uniaxial, efren, consn, r, exponent m, hill 79
+           props(1:7) = mat%propp(1:7)        !
+           ! for anisotropic (PLANAR) plasticity
+           ch = mat%propp(16:21)              !Hill yield function coefficients
+           ! A matrix, derivative of yield function (associative only)
+           fr(1) =  ch(2)+ch(3) + 0.5d0       !0.5d0 added to make it diagonal
+           fr(2) = -ch(3)       + 0.5d0       ! in case of von Mises
+           fr(3) = -ch(2)       + 0.5d0       ! it is not essential
+           fr(4) =  ch(1)+ch(3) + 0.5d0
+           fr(5) = -ch(1)       + 0.5d0
+           fr(6) =  ch(1)+ch(2) + 0.5d0
+           fr(7) = 2d0*ch(6)
+           fr(8) = 2d0*ch(4)
+           fr(9) = 2d0*ch(5)
+           plast = props(5) > ttime                 !consider plasticity ?
+           IF ( is == 5 )THEN             !points defined yield curve
+             val => mat%chead%val
+             numpt = mat%chead%np
+           ELSE
+             NULLIFY (val)
+             numpt = 0
+           END IF
+         ELSE
+           plast = .FALSE.
+         END IF
+         ! ------------------------------------------------------------------------------------
+       CASE (5)                        !Orthotropic Elastic - No Plasticity      ( mtype == 5)
+         eprop(1) = mat%prope(45)      !(1,1)   11-11
+         eprop(2) = mat%prope(46)      !(2,1)   11-22
+         eprop(3) = mat%prope(48)      !(3,1)   11-33
+         eprop(4) = mat%prope(52)      !(2,2)   22-22
+         eprop(5) = mat%prope(54)      !(3,2)   22-33
+         eprop(6) = mat%prope(66)      !(3,3)   33-33
+         eprop(7) = mat%prope(59)      !(4,4)   12-12
+         eprop(8) = mat%prope(73)      !(5,5)   13-13
+         eprop(9) = mat%prope(80)      !(6,6)   23-23
+         d3 = (/ eprop(3),eprop(5),eprop(6), 0d0,0d0,0d0/)
+         plast = .FALSE.
+       ! ------------------------------------------------------------------------------------
+       CASE (6)                        !Hyperelastic isotropic rubber            ( mtype == 6)
+         eprop(1:12) = mat%prope(7:18)
+         elast = .TRUE.
+         plast = .FALSE.                   !consider plasticity ?
+       ! ------------------------------------------------------------------------------------
+       END SELECT
+
+       !************************** LAYERED SOLID *************************************************
+     ELSE  !nlayr >= 1      layered solid (at integration point level)
+       thick = sec%rprop(1)             !original thickness
+       minstr= sec%rprop(4)             !strain threshold to use TTTI
+
+       nl=1
+       elast = sec%iprop(3) == 0               !elastic problem
+       plast = .NOT.elast                      !consider plasticity ?
+       dm = sec%rprop(6:41)                 !linear elastic integrated matrix
+       IF( plast )THEN  !plastic lamina
+         IF( ALLOCATED ( rr ) )DEALLOCATE( thickl,zposl,rr,matsl,lvari )
+         ALLOCATE( thickl(nlayr),zposl(nlayr),rr(5,nlayr),matsl(nlayr),lvari(nlayr) )
+         i = 42                                !pointer to layer thickness
+         CALL vecasi(nlayr,sec%rprop(i),thickl(1))        !layer thickness
+         i = i+2*nlayr                         !pointer to layer z position
+         !CALL vecasi(nlayr,sec%rprop(i),zposl(1))         !layer z position
+         i = i+nlayr                           !pointer to layer rotation matrix
+         CALL vecasi(nlayr*5,sec%rprop(i),rr(1,1))        !layer rotation matrix
+
+         lvari(1:nlayr)= sec%iprop(nlayr+5:2*nlayr+4)
+         DO il=1,nlayr
+           mate= sec%iprop(4+il)
+           mat => pmats(mate)%p        !search layer material
+           matsl(il)%p => mat
+         END DO
+       END IF
+       oldm = -1                              !recompute constants
+     END IF
+     newmt = .FALSE.                        !same material than previous ?
+     IF( ALLOCATED(varin) ) DEALLOCATE (varin)
+     IF( plast) ALLOCATE( varin(nvar,ngaus,ngaup) )  !
+
+   END IF !newmt
+
+   !*** computes actual configuration
+   x = coora(:,e%lnods)               !coordinates of control points
+   !u = x - coori(:,e%lnods)           !incremental displacements for EAS
+   !WRITE(58,"(e15.5)")u
+   IF( easts == 2 )THEN
+     ! compute EAS parameter from incremental displacements
+     u = x - coori(:,e%lnods)           !total displacements  TEMP
+     DO gp=1,ngaup
+       e%alpha(gp) = e%alpha(gp) - DOT_PRODUCT( e%h(:,gp), RESHAPE(u,(/ ndofe /)))/e%ka(gp)  !update EAS parameter
+     END DO
+   END IF
+   ! First loop to compute C components at faces
+   DO face=1,nface ! for each face
+     ! -------- For MEMBRANE Strains ------------
+     IF (ansmm > 0) THEN
+       DO jj=1,3    !3 tangent values for each side direction
+         !gradient in local system at sampling points
+         tq(:,jj,face,1) = MATMUL(x,mdtan(:,  jj,face))  ! xi-derivative
+         tq(:,jj,face,2) = MATMUL(x,mdtan(:,3+jj,face))  ! eta-derivative
+         tq(:,jj,face,3) = MATMUL(x,mdtan(:,6+jj,face))  ! tan-derivative
+         !Components of First Fundamental Form  (FFF) in natural coordinates at each assumed strain point
+         cn(jj,face,1) = DOT_PRODUCT(tq(:,jj,face,1),tq(:,jj,face,1)) !Cxx
+         cn(jj,face,2) = DOT_PRODUCT(tq(:,jj,face,2),tq(:,jj,face,2)) !Cee
+         cn(jj,face,3) = DOT_PRODUCT(tq(:,jj,face,3),tq(:,jj,face,3)) !Ctt
+       END DO
+     END IF
+     ! -------- For SHEAR Strains ---------------
+     IF( anssh > 0 ) THEN
+       tas(:,:,face) = MATMUL(x,e%nfdas(:,:,face))              !der x/x_3  at each assumed strain point (shear)
+       gas(:,:,face) = MATMUL(x,sdtan(:,:,face))                 !der x/tan  at each assumed strain point (shear)
+       DO jj=1,nassp    !for each assumed strain point (shear)
+         cmas(jj,face) = DOT_PRODUCT(tas(:,jj,face),gas(:,jj,face)) !mixed tangent-normal shear strain
+       END DO
+     END IF
+     ! WRITE(58,"('gradientes en la direccion 3')")
+     ! WRITE(58,"(3e15.6)")tas(:,:,face)
+     ! WRITE(58,"('gradientes en la direccion tangente')")
+     ! WRITE(58,"(3e15.6)")gas(:,:,face)
+     ! WRITE(58,"('deformaciones tangentes mixtas ')")
+     ! WRITE(58,"(6e15.6)")cmas(:,face)
+     ! WRITE(58,"('mixed shear strains at center')")
+     jj = 0
+     DO gp=1,ngaup !compute metric tensors (5 of 6 components) at in-plane integration points
+       !   Membrane strains
+       SELECT CASE (ansmm)
+       CASE (0)    ! standard displacements
+         !gradient in local system at Gauss  points
+         tq(:,1,face,gp) = MATMUL(x,e%ipcdm(:,1,face,gp))
+         tq(:,2,face,gp) = MATMUL(x,e%ipcdm(:,2,face,gp))
+         !First Fundamental Form  (FFF) in local cartesisn coordinates at each Gauss Point
+         cq(1,face,gp) = DOT_PRODUCT(tq(:,1,face,gp),tq(:,1,face,gp)) !C11
+         cq(2,face,gp) = DOT_PRODUCT(tq(:,2,face,gp),tq(:,2,face,gp)) !C22
+         cq(3,face,gp) = DOT_PRODUCT(tq(:,1,face,gp),tq(:,2,face,gp)) !C12
+       CASE (1:2)  ! MITC or ANS
+         ji = e%jacim(:,:,face,gp)   !inverse in-plane jacobian at integration point of the face
+         f = RESHAPE( (/ ji(1,1)**2,              ji(1,2)**2,      ji(1,1)*ji(1,2), &     !transformation matrix for a 2x2 tensor
+                         ji(2,1)**2,              ji(2,2)**2,      ji(2,1)*ji(2,2), &
+                         2d0*ji(1,1)*ji(2,1), 2d0*ji(1,2)*ji(2,2), ji(1,1)*ji(2,2)+ji(1,2)*ji(2,1) /),(/3,3/))
+         !First Fundamental Form (FFF) at each integration point
+         cq(:,face,gp) =  MATMUL(pagm(:,:,gp),RESHAPE((/cn(:,face,:)/),(/nasmm/)))   !
+         !transform FFF to local Cartesian system
+         cq(1:3,face,gp) = MATMUL(f,cq(1:3,face,gp))            !FFF cartesian at GP of face
+       END SELECT
+       !compute cartesian transverse shear strain components at Gauss points (gp) at faces (face)
+       SELECT CASE (anssh)
+       CASE (0)  !standard displacement formulation
+         jj = jj + 1
+         tas(:,jj,face) = MATMUL(x,e%cartd(:,3,face,gp))        !der x/x_3  at gauss point (shear strain)
+         gas(:,jj,face) = MATMUL(x,e%cartd(:,1,face,gp))        !der x/1 at each gauss point (shear strain)
+         ccas(1,face,gp) = DOT_PRODUCT(tas(:,jj,face),gas(:,jj,face)) !cartesyan shear strain at gauss points
+         jj = jj + 1
+         tas(:,jj,face) = tas(:,jj-1,face)                      !der x/x_3  at gauss point (shear strain)
+         gas(:,jj,face) = MATMUL(x,e%cartd(:,2,face,gp))        !der x/2 at each gauss point (shear strain)
+         ccas(2,face,gp) = DOT_PRODUCT(tas(:,jj,face),gas(:,jj,face)) !cartesyan shear strain at gauss points
+       CASE (1:2) !MITC or ANS
+         ji = e%jacis(:,:,face,gp)   !inverse in-plane jacobian at integration point of the face
+         vas(1:2) = MATMUL(pags(1:2,1:nassp,gp),cmas(:,face)) !(2) (NASSP) mixed shear strains at gauss points
+         ccas(:,face,gp) = MATMUL(vas,ji)                    !x_1-x_3 & x_2-x3
+       END SELECT
+       !WRITE(58,"(2e15.6)")vas(:)
+       IF( easts == 0 )THEN
+         f3 = MATMUL(x,e%nf3(:,face,gp))             !f_3 at mid-surface
+         c33(gp,face) = DOT_PRODUCT(f3,f3)            !C(3,3) at mid-surface
+       ELSE
+         IF( face == 1 )  f3 = MATMUL(x,e%nf3(:,face,gp))            !f_3 at mid-surface
+         c33(gp,face) = DOT_PRODUCT(f3,f3)          !C(3,3) at mid-surface
+       END IF
+     END DO
+     !WRITE(58,"('cartesian shear strains at center')")
+     !WRITE(58,"(2e15.6)")ccas(:,face,:)
+   END DO
+   ! COMPUTE all The B matrix necessary for equivalent nodal forces
+   CALL bmma27(tq,bm,ansmm,e%ipcdm)    !compute B_m matrix at each face
+   CALL bsma27(gas,  tas,anssh,nassp,e%nfdas,e%cartd,bs)     !compute mixed B_s matrix at sampling points at each face
+      !compute transverse strain matrix at faces or center
+   CALL btma27(easts,e%nf3,x,b3)     !compute mixed B_s matrix at sampling points at each face
+   !CALL proma1(strel,u,bs(1,1,1,1),1,6,ndofe)   !strains from B-matrix TEMP
+   !CALL proma1(strel,u,bs(1,1,1,2),1,6,ndofe)   !strains from B-matrix TEMP
+   ! EAS
+   !   internal variables
+   flag2 = .FALSE.    !initializes to elastic step
+   IF( ASSOCIATED(e%gausv) )THEN  !if internal variables already exist
+     varin = e%gausv                !pass to auxiliar array
+   ELSE IF( plast ) THEN
+     varin = 0d0                    !set internal variables to zero
+   END IF
+   ! Gauss point loop
+   ! initializes variables to be computed over in-plane GP loop
+   semi = 0d0               !equivalent stresses for membrane (3,3,2)
+   sesi = 0d0               !equivalent stresses for shear    (nassp,2)
+   se3  = 0d0               !equivalent transverse stress     (ngaup)
+   rl   = 0d0               !initializes equivalent nodal forces
+   !rl1= 0d0                 !initializes equivalent nodal forces TEMP
+   ! substract initial strains
+   IF( easts == 0 )THEN
+     c33 = c33-e%c33i    !two values
+   ELSE
+     c33(:,1) = c33(:,1)-e%c33i(:,1) !just one value
+   END IF
+   cq = cq -e%cqi          !metric tensor at both surfaces
+   ccas= ccas -e%ccasi     !shear values at both surfaces
+   !WRITE(58,"(6e15.6)")cq(1:2,:,:)-1d0
+   !WRITE(58,"(3e15.6)")c33(:)-1d0
+   !WRITE(58,"(6e15.6)")cq(3,:,:)
+   !WRITE(58,"(6e15.6)")ccas
+   DO gp=1,ngaup      !for each in-plane Gauss Point
+     ! initializes variables to be computed over TTT GP loop
+     IF(easts == 2 )THEN
+       ka = 0d0                 !EAS factor Ka
+       ralpha = 0d0             !EAS residual
+       h      = 0d0             !EAS h vector
+       deq = 0d0                !EAS initializes integrated equivalent D3 vector  (11=5*nface+1)
+     END IF
+     sem = 0d0                !initializes integrated equivalent in-plane stresses (3,nface)
+     ses = 0d0                !initializes integrated equivalent shear stresses    (2,nface)
+     !h1= 0d0                   !initializes h vector TEMP
+     !CALL bmai27(bm,bs,e%jacin(:,:,:,gp),bm1,bs1,gp,ansmm) !compute B matrices for interpolation TEMP
+     !CALL proma1(strel,u,bs1(1,1,1,1),1,4,ndofe)   !strains from B-matrix TEMP
+     DO g=1,ngaus      !for each TTT Gauss point
+       IF( easts == 2) fac = EXP(2d0*e%alpha(gp)*thf(g))              !exp(2*alpha*zeta) EAS
+       voli = DOT_PRODUCT(shv(:,g),e%dvol(:,gp))*wei(g)               !Gauss Point volume
+       !interpolate metric tensor from the sampling surfaces
+       stran((/1,2,4/)) = shm(1,g)*cq(:,1,gp)   + shm(2,g)*cq(:,2,gp)     !in-plane components
+       stran(5:6)       = shs(1,g)*ccas(:,1,gp) + shs(2,g)*ccas(:,2,gp)   !transverse shear components
+       IF( easts == 0 )THEN       ! two points
+         stran(3)       = sht(1,g)*c33(gp,1) + sht(2,g)*c33(gp,2)         !out-of-plane components
+       ELSE IF (easts == 1 ) THEN ! one point
+         stran(3) = c33(gp,1)                                                 !U^2(3,3)
+       ELSE                       ! EAS
+         c33z     = c33(gp,1)*fac                                         !out-of-plane components
+         stran(3) = c33z                                                  !U^2(3,3)
+       END IF
+       IF( small )THEN
+         flag = 2                   ! no spectral decomposition
+       ELSE
+         flag = 1                   ! initializes to no spectral decomposition
+       END IF
+       !************************** STANDARD SOLID *****************************************
+       !IF( nlayr == 0 )THEN            !standard solid section (not layered)
+         ! ------------------------------------------------------------------------------------
+         SELECT CASE (mtype)
+         ! ------------------------------------------------------------------------------------
+         CASE (1)                        !Isotropic Elastic - Anisotropic Plastic  ( mtype == 1)
+           IF( small )THEN               !Green Lagrange strains (twice)
+             delta = (SUM(stran(1:3))-3d0)/6d0       !volumetric strain /3
+             stran(1:3) = stran(1:3)-delta*2d0-1d0   !shear strains (twice)
+           ELSE   ! Hencky (logarithmic) strains (volumetric and deviatoric parts)
+             ! INPUT Stran = C  OUTPUT stran = twice the deviatoric strains    Delta = Ln(J)/3
+             CALL lgst18(stran,r,lb,'RESVPL',ierr,flag,delta)
+             IF( ierr == 1 )THEN
+               WRITE(55,"(12i5)",ERR=9999) e%lnods(1:nnode)
+               WRITE(55,"(6e12.4)",ERR=9999) stran(1:6)
+               WRITE(55,"(3e15.4)",ERR=9999) x
+               RETURN !CALL runen3('RESVPL: negative eigenvalues of U^2')
+             END IF
+           END IF
+           !elastic (trial) strains
+           !IF( .NOT.elast )THEN
+           !  IF( ASSOCIATED(e%gausv)) e%gausv(1:7,g,gp) = e%gausv(8:14,g,gp)       !last converged
+           !  strpl(1:6) = varin(1:6,g,gp)            !previous (twice) plastic strains
+           !  stran(1:6) = stran(1:6) - strpl(1:6)   !trial Elastic log strains
+           !END IF
+           str = gm*stran                         !Trial elastic shear stresses
+           !IF( plast ) THEN              !Consider plasticity
+           !  efpst = varin(7,g,gp)        !effect plastic strain
+           !  CALL corr18(str(1),str(2),str(3),str(4),str(5),str(6), &
+           !              efpst,gm,props,fr,ierr,dstpl,pflag,is,numpt,val)
+           !  IF(ierr == 1) RETURN              !no convergence in plasticity
+           !  IF( pflag )THEN                      !if plastic flow
+           !    varin(1:6,g,gp) = varin(1:6,g,gp) + dstpl(1:6)  !total plastic shear strains
+           !    varin(7,g,gp) = varin(7,g,gp) + efpst           !Total effect. plastic strain
+           !    flag2 = .TRUE.
+           !  END IF
+           !END IF
+           str(1:3) = str(1:3) + delta*km      !add press to deviatoric stress tensor
+           e%gausv(1:6,g,gp) = stran
+           e%gausv(1:3,g,gp) = e%gausv(1:3,g,gp)/2d0 + delta/3d0
+           !stral = stran                           !TEMP
+           !stral(1:3) = stral(1:3)/2d0 + delta     !TEMP
+           !WRITE(58,"('iel',3i3)") ielem,gp,g      !TEMP
+           !WRITE(58,"(6e16.5)")stral               !TEMP
+         ! ------------------------------------------------------------------------------------
+
+         CASE (5)                        !Orthotropic Elastic - No Plasticity      ( mtype == 5)
+           IF( small )THEN               !Green Lagrange strains (twice)
+             stran(1:3) = (stran(1:3)-1d0)/2d0   !2nd Piola Kirchhoff stress
+           ELSE   ! Hencky (logarithmic) strains (volumetric and deviatoric parts)
+             ! stran = twice the deviatoric strains    Delta = Ln(J)/3
+             CALL lgst18(stran,r,lb,'RESVPL',ierr,flag,delta)
+             stran(1:3) = stran(1:3)/2 + delta
+           END IF
+           str(1) = eprop(1)*stran(1)+eprop(2)*stran(2)+eprop(3)*stran(3)
+           str(2) = eprop(2)*stran(1)+eprop(4)*stran(2)+eprop(5)*stran(3)
+           str(3) = eprop(3)*stran(1)+eprop(5)*stran(2)+eprop(6)*stran(3)
+           str(4) = eprop(7)*stran(4)
+           str(5) = eprop(8)*stran(5)
+           str(6) = eprop(9)*stran(6)
+         ! ------------------------------------------------------------------------------------
+         CASE (6)                        !Hyperelastic isotropic rubber            ( mtype == 6)
+           CALL rubber3d(eprop,stran,mat%matdef(8),stre=str,d3=d3)
+           !CALL eige18(stran,r,lb,flag)          !squared eigenvalues
+           !CALL rubber3dn(eprop,lb,mat%matdef(8),str)   !compute principal stresses and pressure
+         ! ------------------------------------------------------------------------------------
+         END SELECT
+
+       !************************** LAYERED SOLID *************************************************
+       !ELSE  !nlayr >= 1      layered solid (at integration point level)
+       !
+       !  ! check if laminate integration is necessary
+       !  IF (elast) THEN
+       !    ttti = .FALSE.
+       !  ELSE
+       !    aux  = ABS(stran(1)-1d0)+ABS(stran(2)-1d0)+ABS(stran(3)-1d0)+ &
+       !           ABS(stran(4))+ABS(stran(5))+ABS(stran(6))
+       !    ttti = aux  > minstr   !laminate integration?
+       !  END IF
+       !  pflag = .FALSE.                    !initializes flag
+       !
+       !  IF( ttti )THEN
+       !    IF( small )THEN               !Green Lagrange strains (twice)
+       !      stran(1:3) = (stran(1:3)-1d0)*0.5   !shear strains (twice)
+       !    ELSE   ! Hencky (logarithmic) strains (volumetric and deviatoric parts)
+       !      !computes Hencky (logarithmic) strains (volumetric and deviatoric parts)
+       !      ! stran = twice the deviatoric strains    Delta = Ln(J)/3
+       !      CALL lgst18(stran,r,lb,'RESVPL',ierr,flag,delta)
+       !      IF( ierr == 1 )THEN
+       !        WRITE(55,"(8i5)",ERR=9999) e%lnods(1:nnode)
+       !        WRITE(55,"(6e12.4)",ERR=9999) stran(1:6)
+       !        WRITE(55,"(3e15.4)",ERR=9999) x
+       !        RETURN !CALL runen3('RESVPL: negative eigenvalues of U^2')
+       !      END IF
+       !      stran(1:3) = (stran(1:3)/2d0+delta)   !recompute axial strains
+       !    END IF
+       !    str = 0d0                         !Initialization
+       !    !Trought laminate integration loop (rule of mixtures)
+       !    DO il=1,nlayr                        !for each layer
+       !      !Rotate strains from element basis to layer basis (if necessary)
+       !      IF( rr(1,il) < 0.9999999999 )THEN  ! Angle is not zero
+       !        stral(1) = rr(1,il)*stran(1)+ rr(2,il)*stran(2)+ rr(3,il)*stran(4) !e11
+       !        stral(2) = rr(2,il)*stran(1)+ rr(1,il)*stran(2)- rr(3,il)*stran(4) !e22
+       !        stral(3) = stran(3)                                                !e33
+       !        stral(4) =-rr(4,il)*stran(1)+ rr(4,il)*stran(2)+ rr(5,il)*stran(4) !e12
+       !        stral(5) = stran(5)                                                !e13
+       !        stral(6) = stran(6)                                                !e23
+       !      ELSE
+       !        stral(1:6) = stran(1:6)
+       !      END IF
+       !
+       !      IF (il==nlayr) THEN
+       !        ilv=lvari(il)
+       !        jlv=nvar
+       !      ELSE
+       !        ilv=lvari(il)
+       !        jlv=lvari(il+1)-1
+       !      END IF
+       !
+       !      mat => matsl(il)%p        ! pointer to layer material
+       !
+       !      SELECT CASE (mat%mtype)
+       !      ! ------------------------------------------------------------------------------------
+       !      CASE (5)                        !Orthotropic Elastic - No Plasticity      ( mtype == 5)
+       !        strel(1) = eprop(1)*stral(1)+eprop(2)*stral(2)+eprop(3)*stral(3)
+       !        strel(2) = eprop(2)*stral(1)+eprop(4)*stral(2)+eprop(5)*stral(3)
+       !        strel(3) = eprop(3)*stral(1)+eprop(5)*stral(2)+eprop(6)*stral(3)
+       !        strel(4) = eprop(7)*stral(4)
+       !        strel(5) = eprop(8)*stral(5)
+       !        strel(6) = eprop(9)*stral(6)
+       !      ! ------------------------------------------------------------------------------------
+       !      END SELECT
+       !
+       !      !Rotate stresses from layer basis to element basis (if necessary)
+       !      IF( rr(1,il) < 0.9999999999 )THEN  ! Angle is not zero
+       !        staux(1) = strel(1)*rr(1,il)+ strel(2)*rr(2,il)- strel(4)*rr(4,il)
+       !        staux(2) = strel(1)*rr(2,il)+ strel(2)*rr(1,il)+ strel(4)*rr(4,il)
+       !        staux(3) = strel(3)
+       !        staux(4) = strel(1)*rr(3,il)- strel(2)*rr(3,il)+ strel(4)*rr(5,il)
+       !        staux(5:6) = strel(5:6)
+       !      ELSE
+       !        staux(1:6) = strel(1:6)
+       !      END IF
+       !
+       !      !***   compute laminate stress on integration point level
+       !      str(1:6) = str(1:6) + staux(1:6)*thickl(il)/thick   ! laminate integrated stresses
+       !    END DO !l (loop to next layer)
+       !
+       !  ELSE !elastic response of integrated laminated solid (small strains only)
+       !    stran(1:3) = (stran(1:3) - 1d0 )*0.5   !2nd Piola Kirchhoff stress
+       !    str(1:6) = MATMUL(RESHAPE((dm),(/6,6/)),stran(1:6))
+       !  END IF
+       !
+       !END IF  !nlayr == 0
+
+       IF(mtype == 6)THEN  !rubbers
+         sig = str
+         !!Second Piola Kirchhoff stress tensor
+         !DO j=1,3
+         ! str(j) = (str(j)+str(4)/lb(j))/lb(j)     ! S = [ Phid_i + (Li Phiv_i)/Li ]/Li
+         !END DO
+         !! store the stress vector (2nd Piola-Kirchhoff stress tensor)
+         !!Compute 3-D stresses with the spectral decomposition  R^T * Beta * R
+         !sig(1) = r(1,1)*str(1)*r(1,1) + r(1,2)*str(2)*r(1,2) + r(1,3)*str(3)*r(1,3) !(1,1)
+         !sig(2) = r(2,1)*str(1)*r(2,1) + r(2,2)*str(2)*r(2,2) + r(2,3)*str(3)*r(2,3) !(2,2)
+         !sig(3) = r(3,1)*str(1)*r(3,1) + r(3,2)*str(2)*r(3,2) + r(3,3)*str(3)*r(3,3) !(3,3)
+         !sig(4) = r(1,1)*str(1)*r(2,1) + r(1,2)*str(2)*r(2,2) + r(1,3)*str(3)*r(2,3) !(1,2)
+         !sig(5) = r(1,1)*str(1)*r(3,1) + r(1,2)*str(2)*r(3,2) + r(1,3)*str(3)*r(3,3) !(1,3)
+         !sig(6) = r(2,1)*str(1)*r(3,1) + r(2,2)*str(2)*r(3,2) + r(2,3)*str(3)*r(3,3) !(2,3)
+         e%stint(:,g,gp) = sig ! keep 2nd Piola Kirchhoff
+       ELSE
+         !e%stint(:,g,gp) = str ! keep Kirchhoff stress for output
+         IF( flag == 0)THEN
+           ! Computes Hencky stress on the natural Frame T(L) = R^T T R
+           sig(1) = r(1,1)*str(1)*r(1,1)+r(2,1)*str(2)*r(2,1)+r(3,1)*str(3)*r(3,1)+ &
+               2d0*(r(1,1)*str(4)*r(2,1)+r(1,1)*str(5)*r(3,1)+r(2,1)*str(6)*r(3,1))
+           sig(2) = r(1,2)*str(1)*r(1,2)+r(2,2)*str(2)*r(2,2)+r(3,2)*str(3)*r(3,2)+ &
+               2d0*(r(1,2)*str(4)*r(2,2)+r(1,2)*str(5)*r(3,2)+r(2,2)*str(6)*r(3,2))
+           sig(3) = r(1,3)*str(1)*r(1,3)+r(2,3)*str(2)*r(2,3)+r(3,3)*str(3)*r(3,3)+ &
+               2d0*(r(1,3)*str(4)*r(2,3)+r(1,3)*str(5)*r(3,3)+r(2,3)*str(6)*r(3,3))
+           sig(4) = r(1,1)*str(1)*r(1,2)+r(2,1)*str(2)*r(2,2)+r(3,1)*str(3)*r(3,2)+ &
+                    r(1,1)*str(4)*r(2,2)+r(1,1)*str(5)*r(3,2)+r(2,1)*str(6)*r(3,2)+ &
+                    r(2,1)*str(4)*r(1,2)+r(3,1)*str(5)*r(1,2)+r(3,1)*str(6)*r(2,2)
+           sig(5) = r(1,1)*str(1)*r(1,3)+r(2,1)*str(2)*r(2,3)+r(3,1)*str(3)*r(3,3)+ &
+                    r(1,1)*str(4)*r(2,3)+r(1,1)*str(5)*r(3,3)+r(2,1)*str(6)*r(3,3)+ &
+                    r(2,1)*str(4)*r(1,3)+r(3,1)*str(5)*r(1,3)+r(3,1)*str(6)*r(2,3)
+           sig(6) = r(1,2)*str(1)*r(1,3)+r(2,2)*str(2)*r(2,3)+r(3,2)*str(3)*r(3,3)+ &
+                    r(1,2)*str(4)*r(2,3)+r(1,2)*str(5)*r(3,3)+r(2,2)*str(6)*r(3,3)+ &
+                    r(2,2)*str(4)*r(1,3)+r(3,2)*str(5)*r(1,3)+r(3,2)*str(6)*r(2,3)
+          ! Computes 2nd P-K stress on the natural Frame S(L) = F(T(L)
+           str(1) = sig(1)/lb(1)**2
+           str(2) = sig(2)/lb(2)**2
+           str(3) = sig(3)/lb(3)**2
+           IF( ABS(lb(1)-lb(2)) > 1.d-6)THEN   !lb(1) /= lb(2)
+             str(4) = sig(4)*2d0*LOG(lb(1)/lb(2))/(lb(1)**2-lb(2)**2)
+           ELSE                                !lb(1) = lb(2)
+             str(4) = sig(4)/lb(1)/lb(2)
+           END IF
+           IF( ABS(lb(1)-lb(3)) > 1.d-6)THEN   !lb(1) /= lb(3)
+             str(5) = sig(5)*2d0*LOG(lb(1)/lb(3))/(lb(1)**2-lb(3)**2)
+           ELSE                                !lb(1) = lb(3)
+             str(5) = sig(5)/lb(1)/lb(3)
+           END IF
+           IF( ABS(lb(2)-lb(3)) > 1.d-6)THEN   !lb(2) /= lb(3)
+             str(6) = sig(6)*2d0*LOG(lb(2)/lb(3))/(lb(2)**2-lb(3)**2)
+           ELSE                                !lb(2) = lb(3)
+             str(6) = sig(6)/lb(2)/lb(3)
+           END IF
+          ! Computes 2nd P-K on the Lagrangian Frame S = R S(L) R^T
+           sig(1) = r(1,1)*str(1)*r(1,1)+r(1,2)*str(2)*r(1,2)+r(1,3)*str(3)*r(1,3)+ &
+               2d0*(r(1,1)*str(4)*r(1,2)+r(1,1)*str(5)*r(1,3)+r(1,2)*str(6)*r(1,3))
+           sig(2) = r(2,1)*str(1)*r(2,1)+r(2,2)*str(2)*r(2,2)+r(2,3)*str(3)*r(2,3)+ &
+               2d0*(r(2,1)*str(4)*r(2,2)+r(2,1)*str(5)*r(2,3)+r(2,2)*str(6)*r(2,3))
+           sig(3) = r(3,1)*str(1)*r(3,1)+r(3,2)*str(2)*r(3,2)+r(3,3)*str(3)*r(3,3)+ &
+               2d0*(r(3,1)*str(4)*r(3,2)+r(3,1)*str(5)*r(3,3)+r(3,2)*str(6)*r(3,3))
+           sig(4) = r(1,1)*str(1)*r(2,1)+r(1,2)*str(2)*r(2,2)+r(1,3)*str(3)*r(2,3)+ &
+                    r(1,1)*str(4)*r(2,2)+r(1,1)*str(5)*r(2,3)+r(1,2)*str(6)*r(2,3)+ &
+                    r(1,2)*str(4)*r(2,1)+r(1,3)*str(5)*r(2,1)+r(1,3)*str(6)*r(2,2)
+           sig(5) = r(1,1)*str(1)*r(3,1)+r(1,2)*str(2)*r(3,2)+r(1,3)*str(3)*r(3,3)+ &
+                    r(1,1)*str(4)*r(3,2)+r(1,1)*str(5)*r(3,3)+r(1,2)*str(6)*r(3,3)+ &
+                    r(1,2)*str(4)*r(3,1)+r(1,3)*str(5)*r(3,1)+r(1,3)*str(6)*r(3,2)
+           sig(6) = r(2,1)*str(1)*r(3,1)+r(2,2)*str(2)*r(3,2)+r(2,3)*str(3)*r(3,3)+ &
+                    r(2,1)*str(4)*r(3,2)+r(2,1)*str(5)*r(3,3)+r(2,2)*str(6)*r(3,3)+ &
+                    r(2,2)*str(4)*r(3,1)+r(2,3)*str(5)*r(3,1)+r(2,3)*str(6)*r(3,2)
+         ELSE IF(flag == 1)THEN  !all eigenvalues are almost equal
+           sig(:) = str(:)/lb(1) !lambda squared
+         ELSE
+           sig = str
+         END IF
+         e%stint(:,g,gp) = sig ! keep 2nd P-Kirchhoff stress for output
+       END IF
+       !***   compute Int(B**t*sigma) on element level
+       sig = sig*voli          !Original dvol used (TLF)
+       !CALL bmat27(bm1,bs1,b3(:,:,gp),shape(:,g),fac,bmatx)        !interpolate B matrix  TEMP
+       !CALL proma1(strel,u,bmatx,1,6,ndofe)                        !strains from B-matrix TEMP
+       !WRITE(58,"(6e16.5)")strel                                   !                      TEMP
+       !CALL proma3(rl1,bmatx,sig,ndofe,6,.FALSE.)                  !add to nodal forces   TEMP
+       ! Compute equivalent stresses and constitutive matrix  !AQUI ESTOY
+       sem(1:3,2) = sem(1:3,2) + sig((/1,2,4/))*shm(2,g)
+       sem(1:3,1) = sem(1:3,1) + sig((/1,2,4/))*shm(1,g)
+       ses(1:2,1) = ses(1:2,1) + sig(5:6)*shs(1,g)
+       ses(1:2,2) = ses(1:2,2) + sig(5:6)*shs(2,g)
+       IF( easts == 0 )THEN
+         se3(gp,1) = se3(gp,1) + sig(3)*sht(1,g)
+         se3(gp,2) = se3(gp,2) + sig(3)*sht(2,g)
+       ELSE IF (easts == 1 )THEN
+         se3(gp,1) = se3(gp,1) + sig(3)
+       ELSE
+         se3(gp,1)    = se3(gp,1)    + sig(3)*fac
+         !--------------------------- for H computation  EAS
+         staux = d3*c33z*thf(g)*voli             !D3*C33*zeta*Dvol
+         !
+         deq( 1: 3) = deq( 1: 3) + staux((/1,2,4/))*shm(1,g)
+         deq( 4: 6) = deq( 4: 6) + staux((/1,2,4/))*shm(2,g)
+         deq( 7: 8) = deq( 7: 8) + staux(5:6)      *shs(1,g)
+         deq( 9:10) = deq( 9:10) + staux(5:6)      *shs(2,g)
+         deq(11)    = deq(11)    + (staux(3) + sig(3)*2d0*thf(g))*fac
+         ralpha = ralpha + sig(3)*thf(g)*c33z                 ! compute  EAS residual &
+         ka = ka + (staux(3) + sig(3)*2d0*thf(g))*c33z*thf(g) !          EAS stiffness
+         !CALL proma3(h1,bmatx,staux,ndofe,6,.FALSE.)          !add to H vector   TEMP
+         !h1 = h1 + b3(:,:,gp)*2*sig(3)*thf(g)                 !add extra term    TEMP
+       END IF
+     END DO ! g=1,ngaus
+     ! face 1 (bottom)
+     SELECT CASE (ansmm)
+     CASE (0)
+       semi(1:3,gp,1) = sem(1:3,1)
+     CASE (1:2)
+       ji = e%jacim(:,:,1,gp)         !inverse in-plane jacobian at integration point of the face
+       f = RESHAPE( (/ ji(1,1)**2,              ji(2,1)**2,      ji(1,1)*ji(2,1), &     !transformation matrix for a 2x2 tensor
+                       ji(1,2)**2,              ji(2,2)**2,      ji(1,2)*ji(2,2), &     ! bar T (transposed)
+                       2d0*ji(1,1)*ji(1,2), 2d0*ji(2,1)*ji(2,2), ji(1,1)*ji(2,2)+ji(1,2)*ji(2,1) /),(/3,3/))
+       sem(1:3,1) = MATMUL(f,sem(1:3,1))
+       IF( easts == 2 )deq(1:3)   = MATMUL(f,deq(1:3))
+       semi(1:3,1:3,1) = semi(1:3,1:3,1) + RESHAPE(MATMUL(TRANSPOSE(pagm2(:,:,gp)),sem(1:3,1)),(/3,3/))
+       IF( easts == 2 )de(1:9) = MATMUL(TRANSPOSE(pagm2(:,:,gp)),deq(1:3))
+     END SELECT
+     IF( anssh > 0 )THEN
+       ji = e%jacis(:,:,1,gp)         !inverse in-plane jacobian at integration point of the face
+       ses(1:2,1) = MATMUL(ji,ses(1:2,1))                           !J^-T Sshear
+       sesi(:,1) = sesi(:,1) + MATMUL(ses(1:2,1),pags(1:2,1:nassp,gp))     !PA^T Sshear
+       IF( easts == 2 ) deq(7:8) = MATMUL(ji,deq(7:8))
+     END IF
+     ! face 2 (top)
+     SELECT CASE (ansmm)
+     CASE (0)
+       semi(1:3,gp,2) = sem(1:3,2)
+     CASE (1:2)
+       ji = e%jacim(:,:,2,gp)     !inverse in-plane jacobian at integration point of the face
+       f = RESHAPE( (/ ji(1,1)**2,              ji(2,1)**2,      ji(1,1)*ji(2,1), &     !transformation matrix for a 2x2 tensor
+                       ji(1,2)**2,              ji(2,2)**2,      ji(1,2)*ji(2,2), &     ! bar T (transposed)
+                       2d0*ji(1,1)*ji(1,2), 2d0*ji(2,1)*ji(2,2), ji(1,1)*ji(2,2)+ji(1,2)*ji(2,1) /),(/3,3/))
+       sem(1:3,2) = MATMUL(f,sem(1:3,2))
+       IF( easts == 2 ) deq(4:6)  = MATMUL(f,deq(4:6))
+       semi(1:3,1:3,2) = semi(1:3,1:3,2) + RESHAPE(MATMUL(TRANSPOSE(pagm2(:,:,gp)),sem(1:3,2)),(/3,3/))
+       IF( easts == 2 )de(10:18) = MATMUL(TRANSPOSE(pagm2(:,:,gp)),deq(4:6))
+     END SELECT
+
+     IF( anssh > 0 )THEN
+       ji = e%jacis(:,:,2,gp)     !inverse in-plane jacobian at integration point of the face
+       ses(1:2,2) = MATMUL(ji,ses(1:2,2))                             !J^-T Sshear
+       sesi(:,2) = sesi(:,2) + MATMUL(ses(1:2,2),pags(1:2,1:nassp,gp)) !PA^T Sshear
+       IF( easts == 2 )deq(9:10) = MATMUL(ji,deq(9:10))
+     END IF
+     ! modify deq(1:11) -> de(1:31)
+     IF( easts == 2 ) THEN
+       de(19:26) = MATMUL(deq( 7:8),pags(:,:,gp))
+       de(27:34) = MATMUL(deq(9:10),pags(:,:,gp))
+       de(35) = deq(11)                           !miraba por acá
+       DO n=1,nnode !for each node
+         IF( ansmm == 0) THEN
+           h(:,n) = deq(1)*bm(:,n,1,gp,1) + deq(2)*bm(:,n,2,gp,1) + deq(3)*bm(:,n,3,gp,1)
+         ELSE
+           h(:,n) = de( 1)*bm(:,n,1,1,1) + de( 2)*bm(:,n,2,1,1) + de( 3)*bm(:,n,3,1,1) + &
+                    de( 4)*bm(:,n,1,2,1) + de( 5)*bm(:,n,2,2,1) + de( 6)*bm(:,n,3,2,1) + &
+                    de( 7)*bm(:,n,1,3,1) + de( 8)*bm(:,n,2,3,1) + de( 9)*bm(:,n,3,3,1)
+         END IF
+         IF( anssh == 0) THEN
+           jj = 2*gp-1
+           h(:,n) = h(:,n) + deq(7)*bs(:,n,jj,1) + deq(8)*bs(:,n,jj+1,1)
+         ELSE
+           h(:,n) = h(:,n) +                                                             &
+                    de(19)*bs(:,n,1,1)   + de(20)*bs(:,n,2,1)   + de(21)*bs(:,n,3,1)   + &
+                    de(22)*bs(:,n,4,1)   + de(23)*bs(:,n,5,1)   + de(24)*bs(:,n,6,1)   + &
+                    de(27)*bs(:,n,1,2)   + de(28)*bs(:,n,2,2)   + de(29)*bs(:,n,3,2)   + &
+                    de(30)*bs(:,n,4,2)   + de(31)*bs(:,n,5,2)   + de(32)*bs(:,n,6,2)
+           IF( anssh == 2 ) h(:,n) = h(:,n) +  de(25)*bs(:,n,7,1)   + de(26)*bs(:,n,8,1) + &
+                                               de(33)*bs(:,n,7,2)   + de(34)*bs(:,n,8,2)
+         END IF
+         h(:,n) = h(:,n) + de(35)*b3(:,n,gp,1)
+
+         IF( ansmm == 0) THEN
+           h(:,n) = h(:,n)+ deq(4)*bm(:,n,1,gp,2) + deq(5)*bm(:,n,2,gp,2) + deq(6)*bm(:,n,3,gp,2)
+         ELSE
+           h(:,n) = h(:,n)+ de(10)*bm(:,n,1,1,2) + de(11)*bm(:,n,2,1,2) + de(12)*bm(:,n,3,1,2) + &
+                    de(13)*bm(:,n,1,2,2) + de(14)*bm(:,n,2,2,2) + de(15)*bm(:,n,3,2,2) + &
+                    de(16)*bm(:,n,1,3,2) + de(17)*bm(:,n,2,3,2) + de(18)*bm(:,n,3,3,2)
+         END IF
+         IF( anssh == 0) THEN
+           h(:,n) = h(:,n) + deq(9)*bs(:,n,jj,2) + deq(10)*bs(:,n,jj+1,2)
+         ELSE
+           h(:,n) = h(:,n) +                                                             &
+                  de(19)*bs(:,n,1,1)   + de(20)*bs(:,n,2,1)   + de(21)*bs(:,n,3,1)   + &
+                  de(22)*bs(:,n,4,1)   + de(23)*bs(:,n,5,1)   + de(24)*bs(:,n,6,1)   + &
+                  de(27)*bs(:,n,1,2)   + de(28)*bs(:,n,2,2)   + de(29)*bs(:,n,3,2)   + &
+                  de(30)*bs(:,n,4,2)   + de(31)*bs(:,n,5,2)   + de(32)*bs(:,n,6,2)
+           IF( anssh == 2 ) h(:,n) = h(:,n) + de(25)*bs(:,n,7,1) + de(26)*bs(:,n,8,1) +&
+                                              de(33)*bs(:,n,7,2) + de(34)*bs(:,n,8,2)
+         END IF
+         h(:,n) = h(:,n) + de(35)*b3(:,n,gp,1)
+       END DO
+       e%ka(gp) = ka                               !keep EAS stiffness
+       e%h(:,gp)  = RESHAPE( h, (/ndofe/))      !keep EAS vector
+       rl   = rl - h*ralpha/ka                  !modify residual forces using EAS residual and vector
+       e%alpha(gp) = e%alpha(gp) - ralpha/ka    !first update of EAS parameter
+     END IF
+   END DO  !gp=1,ngaup
+
+   ! shear & transverse part
+   DO n=1,nnode !for each element node
+     rl(:,n) = rl(:,n) +                                                                     &
+               sesi(1,1)*bs(:,n,1,1)   + sesi(2,1)*bs(:,n,2,1)   + sesi(3,1)*bs(:,n,3,1)   + &
+               sesi(4,1)*bs(:,n,4,1)   + sesi(5,1)*bs(:,n,5,1)   + sesi(6,1)*bs(:,n,6,1)   + &
+               sesi(1,2)*bs(:,n,1,2)   + sesi(2,1)*bs(:,n,2,2)   + sesi(3,1)*bs(:,n,3,2)   + &
+               sesi(4,2)*bs(:,n,4,2)   + sesi(5,1)*bs(:,n,5,2)   + sesi(6,1)*bs(:,n,6,2)   + &
+               MATMUL(b3(:,n,:,1),se3(:,1))
+!              se3(1,1)*b3(:,n,1,1)    + se3(2,1)*b3(:,n,2,1)    + se3(3,1)*b3(:,n,3,1) + se3(4,1)*b3(:,n,4,1)
+     IF( anssh == 2 )rl(:,n) = rl(:,n) + sesi(7,1)*bs(:,n,7,1)   + sesi(8,1)*bs(:,n,8,1)     &
+                                       + sesi(7,2)*bs(:,n,7,2)   + sesi(8,1)*bs(:,n,8,2)
+     IF( easts == 0 )rl(:,n) = rl(:,n) +                                                     &
+               MATMUL(b3(:,n,:,2),se3(:,2))
+!               se3(1,2)*b3(:,n,1,2)    + se3(2,2)*b3(:,n,2,2)    + se3(3,2)*b3(:,n,3,2) + se3(4,2)*b3(:,n,4,2)
+   END DO
+   ! membrane part
+   DO n=1,nnode !for each face node
+     rl(:,n) = semi(1,1,1)*bm(:,n,1,1,1) + semi(2,1,1)*bm(:,n,2,1,1) + semi(3,1,1)*bm(:,n,3,1,1) + &
+               semi(1,2,1)*bm(:,n,1,2,1) + semi(2,2,1)*bm(:,n,2,2,1) + semi(3,2,1)*bm(:,n,3,2,1) + &
+               semi(1,3,1)*bm(:,n,1,3,1) + semi(2,3,1)*bm(:,n,2,3,1) + semi(3,3,1)*bm(:,n,3,3,1) + &
+               rl(:,n)
+     rl(:,n) = semi(1,1,2)*bm(:,n,1,1,2) + semi(2,1,2)*bm(:,n,2,1,2) + semi(3,1,2)*bm(:,n,3,1,2) + &
+               semi(1,2,2)*bm(:,n,1,2,2) + semi(2,2,2)*bm(:,n,2,2,2) + semi(3,2,2)*bm(:,n,3,2,2) + &
+               semi(1,3,2)*bm(:,n,1,3,2) + semi(2,3,2)*bm(:,n,2,3,2) + semi(3,3,2)*bm(:,n,3,3,2) + &
+               rl(:,n)
+
+   END DO
+   e%sem = semi ; e%ses = sesi ; e%set = se3 !keep integrated stresses
+   DO i=1,nnode             !for each node in the element
+     n = e%lnods(i)     !node
+     resid(1:3,n) = resid(1:3,n)+rl(1:3,i) !sum internal force
+   END DO
+
+   !WRITE(58,"('iel',i3)") ielem                  !TEMP
+   !DO j=1,nnode                                  !TEMP
+   !  WRITE(58,"(6e15.5)") rl(:,j),rl1(:,j)       !TEMP
+   !END DO                                        !TEMP
+
+   IF( flag2 )THEN         !if there are variables to modify
+     IF(.NOT.ASSOCIATED(e%gausv))   ALLOCATE( e%gausv(nvar,ngaus,ngaup))
+     e%gausv = varin
+   END IF
+   e => e%next          !point to next element in the list
+ END DO
+ IF(ALLOCATED(varin)) DEALLOCATE(varin)
+ !first = .FALSE.
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE resv27

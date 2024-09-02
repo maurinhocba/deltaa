@@ -1,0 +1,35 @@
+ SUBROUTINE acvd27(ifpre,heade,nelem)
+ !******************************************************************
+ !
+ !*** updates internal node numbering and activates degrees of freedom
+ !
+ !******************************************************************
+ USE esets_db, ONLY : gnods, gelem !INTENT(OUT) gnods(maxnn,melen)
+ IMPLICIT NONE
+
+ ! dummy arguments
+ INTEGER (kind=4):: nelem   !(IN) number of element
+ INTEGER (kind=4):: ifpre(:,:)    !(OUT) active DOFs
+ TYPE (ele27), POINTER :: heade   !pointer to first element in the set
+
+ ! local variables
+ INTEGER (kind=4) inode, iel, j
+ TYPE (ele27), POINTER  :: e                     !element pointers
+
+ !*** activates degrees of freedom
+ !
+   e => heade                         !point to first element
+   DO iel=1,nelem
+     IF (.NOT.ASSOCIATED (e) ) EXIT   !if all elements processed, Exit loop
+     DO inode = 1,nnode                !for each node in the element
+       DO j = 1,3
+         IF (ifpre(j,e%lnods(inode)) == 1 ) ifpre(j,e%lnods(inode)) = 0 !release DOFs
+       END DO
+     END DO
+     gelem = gelem + 1                !update total number of elements
+     gnods(1:nnode,gelem) = e%lnods   !pass to global array
+     e => e%next                      !point to next element
+   END DO
+
+ RETURN
+ END SUBROUTINE acvd27

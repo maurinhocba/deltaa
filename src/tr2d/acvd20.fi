@@ -1,0 +1,39 @@
+ SUBROUTINE acvd20(ifpre,heade,lside,swapc)
+ !******************************************************************
+ !
+ !*** updates internal node numbering and activates degrees of freedom
+ !
+ !******************************************************************
+ USE esets_db, ONLY : gnods, gelem !INTENT(OUT) gnods(maxnn,melen)
+ IMPLICIT NONE
+
+ ! dummy arguments
+ LOGICAL, INTENT(IN OUT) :: lside !flag TRUE if topology already computed
+ LOGICAL, INTENT(IN) :: swapc     !flag TRUE if elements with one neighbor will be swaped
+ INTEGER (kind=4):: ifpre(:,:)    !(OUT) active DOFs
+ TYPE (ele20), POINTER :: heade   !pointer to first element in the set
+
+ ! local variables
+ INTEGER (kind=4)  inode
+ TYPE (ele20), POINTER  :: e                     !element pointers
+
+ !***  create topological array  lnods(4:6,nelem)
+
+ IF(.NOT.lside) CALL toar20(heade,lside,swapc)
+ !
+ !*** activates degrees of freedom
+ !
+ e => heade                         !point to first element
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT   !if all elements processed, Exit loop
+   DO inode = 1,3                   !for each node in the element
+     IF( ifpre(1,e%lnods(inode)) == 1 ) &
+       ifpre(1:2,e%lnods(inode)) = 0 !release DOFs
+   END DO
+   gelem = gelem + 1                !update total number of elements
+   gnods(1:6,gelem) = e%lnods(1:6)  !pass to global array
+   e => e%next                      !point to next element
+ END DO
+
+ RETURN
+ END SUBROUTINE acvd20

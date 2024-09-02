@@ -1,0 +1,89 @@
+ SUBROUTINE rubber3d_DF(pr,g,model,mat,d3)
+
+ ! calculates stiffness and stresses for rubber
+ ! and elastomeric foam materials (not yet)
+
+ IMPLICIT NONE
+ ! DUMMY arguments
+ REAL(kind=8), INTENT(IN):: pr(12)    !(12) material constants
+ REAL(kind=8), INTENT(IN OUT):: g(6)  !(6)  Metric tensor (symmetric)
+ INTEGER(kind=4), INTENT(IN OUT) :: model   !Model
+                                    !1:      Arruda-Boyce
+                                    !2:      Mooney-Rivlin
+                                    !3:      Neo-Hooke
+                                    !4:      Ogden (N=1)
+                                    !5:      Ogden (N=2)
+                                    !6:      Ogden (N=3)
+                                    !7:      Polynomial (N=1)
+                                    !8:      Polynomial (N=2)
+                                    !9:      Polynomial (N=3)
+                                    !10:     Reduced Polynomial (N=1)
+                                    !11:     Reduced Polynomial (N=2)
+                                    !12:     Reduced Polynomial (N=3)
+                                    !13:     Van der Waals (not implemented yet)
+                                    !14:     Yeoh
+                                    !15:     Hyperfoam (N=1)
+                                    !16:     Hyperfoam (N=2)
+                                    !17:     Hyperfoam (N=3)
+ ! optional arguments
+ REAL(kind=8), INTENT(OUT) :: mat(6,6)   !elasticity (stiffness) matrix in vector form
+ REAL(kind=8), INTENT(OUT), OPTIONAL :: d3(6)      !elasticity (stiffness) column-3 in vector form
+
+ ! Local variables
+ REAL(kind=8),PARAMETER  :: pert = 1.0D-04     !perturbation
+ REAL(kind=8)  ::      &
+             streo(6), &     !original stresses
+             gm(6),    &     !modified metric tensor
+             strem(6), &     !modified stresses
+             lb(3),    &     !eigenvalues
+             r(3,3),   &     !eigenvectors
+             str(6),sig(6)   ! auxiliar terms
+
+ INTEGER(kind=4) i,j,k,flag(0:6)   ! index
+
+
+
+
+    DO k=0,6
+       gm = g
+       IF( k /= 0 )THEN
+         IF( k <= 3 )THEN
+           gm(k) = gm(k)+pert       !modify
+         ELSE
+           gm(k) = gm(k)+pert/2d0   !modify
+         END IF
+       END IF
+       CALL eige18(gm,r,lb,flag(k))          !squared eigenvalues (V^-2)
+       DO i=1,3
+         lb(i) = 1d0/lb(i)
+       END DO
+       CALL rubber3dn(pr,lb,model,str)   !compute principal BIOT stresses (1-3) and pressure (4)
+       DO i=1,3
+        str(i) = str(i)*lb(i)+str(4)     ! tau = [ Phid_i*Li + Li Phiv_i
+       END DO
+       sig(1) = r(1,1)*str(1)*r(1,1) + r(1,2)*str(2)*r(1,2) + r(1,3)*str(3)*r(1,3) !(1,1)
+       sig(2) = r(2,1)*str(1)*r(2,1) + r(2,2)*str(2)*r(2,2) + r(2,3)*str(3)*r(2,3) !(2,2)
+       sig(3) = r(3,1)*str(1)*r(3,1) + r(3,2)*str(2)*r(3,2) + r(3,3)*str(3)*r(3,3) !(3,3)
+       sig(4) = r(1,1)*str(1)*r(2,1) + r(1,2)*str(2)*r(2,2) + r(1,3)*str(3)*r(2,3) !(1,2)
+       sig(5) = r(1,1)*str(1)*r(3,1) + r(1,2)*str(2)*r(3,2) + r(1,3)*str(3)*r(3,3) !(1,3)
+       sig(6) = r(2,1)*str(1)*r(3,1) + r(2,2)*str(2)*r(3,2) + r(2,3)*str(3)*r(3,3) !(2,3)
+       IF( k == 0 )THEN
+         streo = sig
+       ELSE
+         strem = sig
+         mat(:,k) = 2d0*(streo-strem)/pert
+       END IF
+
+    END DO
+    ! simetrize
+    !DO i=1,6
+    !  DO j=i+1,6
+    !    mat(i,j) = (mat(i,j) + mat(j,i))/2d0
+    !    mat(j,i) = mat(i,j)
+    !  END DO
+    !END DO
+    IF(PRESENT(d3)) d3 = mat(:,3)
+
+
+ RETURN
+ END SUBROUTINE rubber3d_DF

@@ -1,0 +1,30 @@
+ SUBROUTINE bbar17(cd,bb,t1,vol,ntype,t33,r0,shape,natst)
+ IMPLICIT NONE
+ REAL(Kind=8), INTENT(IN) :: cd(4,2),t1(2,2),t33,vol,r0,shape(4)
+ REAL(Kind=8), INTENT(IN OUT) :: bb(2,4)
+ INTEGER (kind=4), INTENT(IN) :: ntype
+ LOGICAL, INTENT(IN) :: natst
+
+ INTEGER(kind=4) :: i,n
+ REAL(kind=8) :: f
+
+ IF( natst )THEN
+   DO n=1,4     !for each node
+     DO i=1,2   !for each in-plane direction
+       f = cd(n,1)*t1(i,1) + cd(n,2)*t1(i,2)
+       IF( ntype == 3 .AND. i == 1) f = f + t33*shape(n)/r0
+       bb(i,n) = bb(i,n) + f*vol
+     END DO
+   END DO
+ ELSE
+  DO n=1,4     !for each node
+   DO i=1,2   !for each in-plane direction
+     f = cd(n,i)
+     IF( ntype == 3 .AND. i == 1) f = f + t33*shape(n)/r0
+     bb(i,n) = bb(i,n) + f*vol
+   END DO
+ END DO
+
+ END IF 
+ RETURN
+ END SUBROUTINE bbar17

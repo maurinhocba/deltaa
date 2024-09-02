@@ -1,0 +1,46 @@
+ SUBROUTINE asstr7(x,t,gamma)
+ !*****************************************************************************
+ !
+ !***** natural coordinates shear deformation at assumed strain points
+ !
+ !*****************************************************************************
+ IMPLICIT NONE
+ !                        routine parameters
+
+
+ REAL (kind=8), INTENT(IN) :: x(:,:),t(:,:)
+ REAL (kind=8), INTENT(OUT) :: gamma(:)
+
+ !                        local variables
+
+ REAL (kind=8) dx(3),tt(3),p(2) !,gammb(6)
+ INTEGER (kind=8) :: i
+
+ DO i=1,ngamm
+   tt = nf(1)*t(:,kk(1,i))+ nf(2)*t(:,kk(2,i))+ nf(3)*t(:,kk(3,i))
+   dx = nd(1)*x(:,kk(1,i))+ nd(2)*x(:,kk(2,i))+ nd(3)*x(:,kk(3,i))
+   gamma(i) = DOT_PRODUCT(tt,dx)
+   IF( MOD(i,2) == 0 )gamma(i) = -gamma(i)
+ END DO
+
+! ! A  first node side 1 - 4 - 2
+! tt = fxa*t(:,1)+fxc*t(:,4)+fxb*t(:,2) ; dx =-fxd*x(:,1)+fxf*x(:,4)-fxe*x(:,2)
+! gamma(1) = DOT_PRODUCT(dx,tt)
+! ! B  second node side 1 - 4 - 2
+! tt = fxb*t(:,1)+fxc*t(:,4)+fxa*t(:,2) ; dx = fxe*x(:,1)-fxf*x(:,4)+fxd*x(:,2)
+! gamma(2) = DOT_PRODUCT(dx,tt)
+! ! C  first node side 2 - 5 - 3
+! tt = fxa*t(:,2)+fxc*t(:,5)+fxb*t(:,3) ; dx =-fxd*x(:,2)+fxf*x(:,5)-fxe*x(:,3)
+! gamma(3) = DOT_PRODUCT(dx,tt)
+! ! D  second node side 2 - 5 - 3
+! tt = fxb*t(:,2)+fxc*t(:,5)+fxa*t(:,3) ; dx = fxe*x(:,2)-fxf*x(:,5)+fxd*x(:,3)
+! gamma(4) = DOT_PRODUCT(dx,tt)
+! ! E  first node side 3 - 6 - 1
+! tt = fxa*t(:,3)+fxc*t(:,6)+fxb*t(:,1) ; dx =-fxd*x(:,3)+fxf*x(:,6)-fxe*x(:,1)
+! gamma(5) = DOT_PRODUCT(dx,tt)
+! ! F  second node side 3 - 6 - 1
+! tt = fxb*t(:,3)+fxc*t(:,6)+fxa*t(:,1) ; dx = fxe*x(:,3)-fxf*x(:,6)+fxd*x(:,1)
+! gamma(6) = DOT_PRODUCT(dx,tt)
+
+ RETURN
+ END SUBROUTINE asstr7

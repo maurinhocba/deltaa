@@ -1,0 +1,20 @@
+ SUBROUTINE btma29 (cartd,f3,b3)
+ ! compute Strain-displacement matrix for transverse strain
+ ! at assumed strain points for QPRISM  solid-shell element 29 (15 nodes)
+ IMPLICIT NONE
+ !dummy arguments
+ REAL (kind=8), INTENT(IN) :: cartd(:,:,:), &  !(nnode,1 or 3,ngaup) Natural gradient in tangent direction
+                              f3(:,:,:)
+ REAL (kind=8), INTENT(OUT) :: b3(:,:,:,:)     !(ndime,nnode,nassp,nface) Bs matrix for both faces
+ !local variables
+ INTEGER (kind=4) :: node,face,g
+
+ DO g=1,ngaup      !for each Gauss point
+   DO face=1,nface   !for each face
+     DO node=1,nnode  !for each node in the face
+       b3(:,node,g,face) = f3(:,face,g)*cartd(node,face,g) !F3 * N_cart
+     END DO
+   END DO
+ END DO
+ RETURN
+ END SUBROUTINE btma29

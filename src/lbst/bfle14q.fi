@@ -1,0 +1,89 @@
+ SUBROUTINE bfle14q(lb,a,b,sides,is,bb,t,t3,h)
+ !
+ !     Computes bending B matrix for element type 14 (quadratic approach)
+ !
+ IMPLICIT NONE
+
+ LOGICAL, INTENT(IN) :: sides(3), & !True = Side element exists
+                        is(3)       !True = Clamped side
+
+ REAL (kind=8), INTENT(IN) :: lb,                &!A0/A == t/t0
+                              a(3,0:3),b(3,0:3), &!Element side proyections
+                              t(3,2,0:3),        &!configuration derivatives
+                              t3(3),             &!normal vector
+                              h(3,3)              !h vectors (ndime,ncurv)
+
+ REAL (kind=8), INTENT(OUT) ::  bb(3,6,3) !Bending B matrix (ndime, nnode, ncurv)
+
+ INTEGER (kind=4) i,j,k
+ REAL (kind=8) ::  r(3,2),d1(3),d2(3)
+ REAL (kind=8) ::  bl(6,3) !local Bending B matrix (nnode,ncurv)
+ REAL (kind=8) ::  r1(3,3) !local Bending B matrix (nnext,ncurv)
+
+
+ ! Contravariant base vectors of the main element (may be disregarded) !!
+ d1(1) = (t(2,2,0)*t3(3) - t(3,2,0)*t3(2))*lb                          !!
+ d1(2) = (t(3,2,0)*t3(1) - t(1,2,0)*t3(3))*lb                          !!
+ d1(3) = (t(1,2,0)*t3(2) - t(2,2,0)*t3(1))*lb                          !!
+ d2(1) = (t3(2)*t(3,1,0) - t3(3)*t(2,1,0))*lb                          !!
+ d2(2) = (t3(3)*t(1,1,0) - t3(1)*t(3,1,0))*lb                          !!
+ d2(3) = (t3(1)*t(2,1,0) - t3(2)*t(1,1,0))*lb                          !!
+ ! ro components                                                       !!
+ r(1,1) = DOT_PRODUCT(h(:,1) ,d1)                                      !!
+ r(2,1) = DOT_PRODUCT(h(:,2) ,d1)                                      !!
+ r(3,1) = DOT_PRODUCT(h(:,3) ,d1)                                      !!
+ r(1,2) = DOT_PRODUCT(h(:,1) ,d2)                                      !!
+ r(2,2) = DOT_PRODUCT(h(:,2) ,d2)                                      !!
+ r(3,2) = DOT_PRODUCT(h(:,3) ,d2)                                      !!
+ ! ¿this simplified version can work?, compare it
+ ! r = MATMUL(h,t(:,1:2,0))
+
+ !***  bending matrix evaluation
+ bl = 0d0                      !zero B matrix
+ ! remember that B computed is B^T
+ r1 = a(:,1:3)      !matrix relating curvatures with external nodes position
+ bl(4:6,:) = r1     !external nodes contribution to all curvatures
+ DO i=1,3           !for each curvature
+   bl(1:3,i) = bl(1:3,i) -SUM(r1(:,i))/3d0      !internal nodes contribution to "i" curvature
+   ! delta t3 contribution (internal nodes only
+   !  Contributions from normal displacements of the Main element (may be disregarded) !!
+   bl(i,1) = bl(i,1) + r(1,1)*b(i,0) - r(1,2)*a(i,0)          !K11                     !!
+   bl(i,2) = bl(i,2) + r(2,1)*b(i,0) - r(2,2)*a(i,0)          !K22                     !!
+   bl(i,3) = bl(i,3) + r(3,1)*b(i,0) - r(3,2)*a(i,0)          !2K12                    !!
+ END DO
+ ! influence of boundary conditions
+ DO i=1,3
+
+   IF (.NOT.sides(i)) THEN                 ! No side element
+     j = MOD(i,3)+1
+     k = MOD(j,3)+1
+     IF( is(i) )THEN        !clamped side
+
+       !  Contributions from displacements of the main element
+
+       bl(i,:)= bl(i,:) + bl(i+3,:)  !?
+       !bl(j,:)= bl(j,:) - bl(i+3,:)
+       !bl(k,:)= bl(k,:) - bl(i+3,:)
+
+     ELSE ! simple supported or free
+       bl(i,:)= bl(i,:) - bl(i+3,:)
+       bl(j,:)= bl(j,:) + bl(i+3,:)
+       bl(k,:)= bl(k,:) + bl(i+3,:)
+     END IF
+
+   END IF
+ END DO
+
+ DO j=1,3        !for each curvature
+   DO i=1,3      !for each node in the patch
+     bb(:,i,j) = bl(i,j)*t3
+     IF( sides(i) )THEN
+       bb(:,i+3,j) = bl(i+3,j)*t3
+     ELSE
+       bb(:,i+3,j) = 0d0
+     END IF
+   END DO
+ END DO
+
+ RETURN
+ END SUBROUTINE bfle14q

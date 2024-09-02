@@ -1,0 +1,76 @@
+ SUBROUTINE bmatx9(nnode,ntype,deriv,shape,phin,x,r0,bmatx,jac,zigzag,zigzpp,secty)
+ !******************************************************************************
+ !
+ !     computes the tangent deformation matrix for 2-d shell/beam elements
+ !     (non-zero values only)
+ !
+ !******************************************************************************
+ IMPLICIT NONE
+ !***  routine parameters
+ INTEGER (kind=4), INTENT(IN) :: nnode,ntype,secty
+ REAL (kind=8), INTENT(IN) :: deriv(:),shape(:),phin(:),x(:,:),r0,jac
+ REAL (kind=8), INTENT(OUT) :: bmatx(:,:,:)
+ LOGICAL, INTENT(IN) :: zigzag,zigzpp
+ !***  local variables
+ INTEGER (kind=4) n,nm,nq
+ REAL    (kind=8) t1,t2,phi,dphi,r,derxi(nnode),aux,dx(2),dxx(2)
+ REAL    (kind=8), PARAMETER :: nxx(3) =(/ 1d0, -2d0, 1d0 /)
+
+ r    = DOT_PRODUCT(x(1,:),shape)     ! x_1
+ phi  = DOT_PRODUCT(phin,shape)       ! alpha
+ derxi= deriv/jac                     ! N,s
+ dphi = DOT_PRODUCT(phin,derxi)       ! alpha,s
+ dx   = MATMUL(x,derxi)               ! x,s
+ t1 = COS(phi)                        ! cos alpha
+ t2 = SIN(phi)                        ! sin alpha
+ IF( nnode == 3 )THEN
+   dxx = (x(:,1)*nxx(1)+x(:,2)*nxx(2)+x(:,3)*nxx(3))/jac**2
+ ELSE
+   dxx = 0d0
+ END IF
+ IF( ntype == 1 )THEN
+   nq = 3                               ! position of shear in list
+   nm = 2                               ! position of moment in list
+ ELSE
+   nq = 5                               ! position of shear in list
+   nm = 3                               ! position of moment in list
+ END IF
+ bmatx = 0d0 !initializes
+ DO n=1,nnode
+   !       axial force contribution
+   bmatx(1:2,n,1)= derxi(n)*dx(1:2)                   !E_11
+   !         bending contribution
+   bmatx(1,n,nm)= -t1*dphi*derxi(n)                   !C_11
+   bmatx(2,n,nm)= -t2*dphi*derxi(n)
+   bmatx(3,n,nm)= -(dphi*shape(n)*(-t2*dx(1)+t1*dx(2))+            &
+                         derxi(n)*( t1*dx(1)+t2*dx(2)))
+   ! Shear strain
+   bmatx(1,n,nq)= -derxi(n)*t2                        !x_1
+   bmatx(2,n,nq)=  derxi(n)*t1                        !x_2
+   bmatx(3,n,nq)= -shape(n)*(dx(1)*t1+dx(2)*t2)       !alpha
+   IF(ntype == 3) THEN          !shell of revolution
+     aux = shape(n)/r0**2
+     !           hoop stress contribution  E_theta
+     bmatx(1,n,2) = aux*r                            !x_1
+     !           hoop moment contribution  C_theta
+     bmatx(1,n,4) = - aux*t2                         !x_1
+     bmatx(3,n,4) = - aux*t1*r                       !alpha
+   END IF
+   IF( zigzag .AND. secty == 45 )THEN
+       bmatx(4,n,nq+1)=  derxi(n)                         !M_phi psi
+       bmatx(4,n,nq+2)=  shape(n)                         !Q_phi psi
+   END IF
+   IF( zigzpp .AND. secty == 46 )THEN
+       bmatx(4,n,nq+1)=  derxi(n)                        !M_phi psi
+       bmatx(4,n,nq+2)=  shape(n)                        !V_f
+       bmatx(5,n,nq+3)=  derxi(n)                        !M_D
+       bmatx(6,n,nq+4)=  derxi(n)                        !M_2
+       bmatx(7,n,nq+5)=  derxi(n)                        !M_3
+       bmatx(5,n,nq+6)=  shape(n)                        !V_D
+       bmatx(6,n,nq+7)=  shape(n)                        !V_2
+       bmatx(7,n,nq+8)=  shape(n)                        !V_3
+     END IF
+
+ END DO
+ RETURN
+ END SUBROUTINE bmatx9

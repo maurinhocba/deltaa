@@ -1,0 +1,131 @@
+ SUBROUTINE masmt7(heade,coord,emass,mass,sumat,lumpd,ifpre,ndofe)
+ !********************************************************************
+ !
+ !***  evaluates mass matrix for shell/triangular elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd
+ INTEGER(kind=4), INTENT(IN) :: ndofe,ifpre(:,:)
+ REAL(kind=8), INTENT(IN) :: coord(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele07 ), POINTER :: heade
+
+ !        local variables
+ TYPE( ele07 ), POINTER :: e
+ INTEGER (kind=4) g,ii,j,kk,l,n,m,isec,idof,nposn,lm(30),nvar,osec
+ REAL    (kind=8) a(nnode),tmass,rmass,x(3,nnode),x1(3),x2(3),x3(3),auxvl, &
+                  ms(465),b(nnode,nnode),diag,outd,sume1,thick
+ INTEGER(kind=4), SAVE :: i(4) = (/6,4,5,6 /), k(4) = (/ 4,5,6,5 /)
+ TYPE (section), POINTER :: sec
+ INTEGER (kind=4) poesti
+ poesti(l,j) = (60-l)*(l-1)/2+j    ! position l,j in mass(30x30)
+
+ sume1 = 0d0
+ nvar = nnode*ndofe
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED (e) )EXIT
+   isec = e%matno                  !associated material
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     thick = sec%rprop(1)
+     tmass = sec%rprop(5)             ! surface density
+     rmass = tmass*thick**2/12d0
+     osec   = isec                    !update previous material
+   END IF
+
+   a(1:nnode) = 0d0                !initializes nodal mass
+
+   !       first possibility
+   x = coord(:,e%lnods)            !nodal coordinates
+   IF(.NOT.lumpd)b = 0d0           !for full mass matrix
+
+   DO n=1,4                        !for each sub-triangle
+     x1 = x(:,k(n)) - x(:,n)       !side 1
+     x2 = x(:,i(n)) - x(:,n)       !side 2
+     CALL vecpro(x1,x2,x3)         !normal
+     CALL vecuni(3,x3,auxvl)       !twice the area
+     auxvl  = auxvl/6d0            !sub-triangle area/3
+     a(n)   = a(n)    + auxvl      !add to each node
+     a(i(n))= a(i(n)) + auxvl
+     a(k(n))= a(k(n)) + auxvl
+     IF(.NOT.lumpd)THEN            !for full mass matrix
+       diag = auxvl/2d0            !diagonal terms
+       outd = auxvl/4d0            !off-diagonal
+       ii = i(n)                   !node i
+       kk = k(n)                   !node k
+       b(n,n)   = b(n,n)   + diag
+       b(n,ii)  = b(n,ii)  + outd
+       b(n,kk)  = b(n,kk)  + outd
+       b(ii,ii) = b(ii,ii) + diag
+       b(kk,kk) = b(kk,kk) + diag
+       IF( ii < kk )THEN
+         b(ii,kk) = b(ii,kk) + outd
+       ELSE
+         b(kk,ii) = b(kk,ii) + outd
+       END IF
+     END IF
+   END DO
+   !       second possibility (revise it to use !!!)
+   !       j = index(ielem)+ndvolu-1
+   !        DO g = 1,ngaus
+   !          DO n = 1,nnode
+   !            a(n) = a(n) + gausv(j+g)*shape(n,g)*shape(n,g)
+   !          END DO
+   !        END DO
+   !        tmass = tmass*tmass
+   !        auxvl = 0d0
+   !        DO n = 1,nnode
+   !          auxvl = auxvl+a(n)
+   !        END DO
+   !        DO n = 1,nnode
+   !          a(n) = a(n)*tmass/auxvl
+   !        END DO
+   !       END of second possibility
+
+   DO n = 1,nnode
+     l = e%lnods(n)
+     DO idof = 1,3
+       emass(idof,l) = emass(idof,l) +  a(n)*tmass
+     END DO
+     DO idof = 4,ndofe
+       emass(idof,l) = emass(idof,l) +  a(n)*rmass
+     END DO
+   END DO
+   sume1 = sume1 + SUM(a)*tmass
+   IF(.NOT.lumpd) THEN !consistent mass matrix  Assembles over MASS(maxa)
+     nposn = nvar*(nvar+1)/2
+     ms(1:nposn) = 0d0
+     ii = 0
+     g = 0
+     DO n = 1,nnode
+       j = (n-1)*ndofe
+       m = e%lnods(n)
+       DO l = n,nnode
+         ii = ii+1
+         kk = (l-1)*ndofe
+         DO idof = 1,3
+           nposn = poesti(j+idof,kk+idof)
+           ms(nposn) = a(ii)*tmass
+         END DO
+         !   this is not the correct mass matrix for rotational dof
+         DO idof = 4,ndofe
+           nposn = poesti(j+idof,kk+idof)
+           ms(nposn) = a(ii)*rmass
+         END DO
+       END DO
+       DO j = 1,ndofe
+         nposn = ifpre(j,m)
+         g = g+1
+         lm(g) = nposn
+       END DO
+     END DO
+     CALL ensmat(nvar,lm(1),ms(1) ,mass(1))
+   END IF
+   e => e%next
+ END DO
+ WRITE(lures,"(//'  total mass for shell element :', e15.7)")sume1
+ sumat = sumat + sume1
+ RETURN
+ END SUBROUTINE masmt7

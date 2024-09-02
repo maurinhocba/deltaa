@@ -1,0 +1,85 @@
+ SUBROUTINE elmd29 (nelem, heade, taile, iwrit, ngaus, ansmm, anssh, nassp)
+ !*******************************************************************
+ !
+ !*** READ element DATA for 3-D SOLID-SHELL Bezier-Prism element(TLF)
+ !
+ !*******************************************************************
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: iwrit, ngaus, ansmm, anssh, nassp
+ INTEGER (kind=4), INTENT(IN OUT) :: nelem
+ TYPE (ele29), POINTER :: heade,taile !pointers to first and last elements
+ ! local variables
+ TYPE(section), POINTER :: sec        !pointer to a section
+ LOGICAL found
+ INTEGER (kind=4) :: i,ip,j,chnode,isec,osec,secty,mtype
+
+ INTEGER (kind=4) :: mats(3) = (/ 1,5,6 /)  !acceptable material types
+ TYPE (ele29), POINTER :: elem      !auxiliar pointer
+
+ ! *** READ the element nodal connections, and the property numbers.
+
+ IF(iwrit == 1) WRITE(lures,"(//'  ELMT MAT',29x,'NODE NUMBERS',&
+                              &   29x,'angle')",ERR=9999)
+
+ osec = -1  !initializes
+ j = 2+nnode  !last integer value to read
+ DO
+   ! loop over elements
+
+   CALL listen('ELMD29')          !read a card
+   IF (exists('ENDELE')) EXIT     !if key word END_ELEMENT read, exit loop
+
+   nelem = nelem + 1         !increase element counter
+   CALL new_ele29e (elem)    !reserve memory for data
+
+   elem%numel = INT (param(1))   !element label
+
+   isec = INT (param(2))         !associated material
+
+   IF( isec /= osec )THEN        !checks
+     CALL sect_search (isec,found,sec,ip)
+     IF(.NOT.found)CALL runend('ELMD29: Invalid Section Number used')
+     secty = sec%secty        !check section type for element
+     IF( secty /= 0 ) CALL runend('ELMD29: Invalid sect. type for SOLID')
+     IF( sec%mabas >= 0 )THEN
+       mtype = sec%mtbas%mtype  !check material type for element
+       IF( .NOT. ANY(mtype == mats) ) CALL runend('ELMD29: Invalid Mat. type for SPRISM')
+     END IF
+     osec = isec
+   END IF
+
+   elem%matno = ip        !store section position in array
+
+   elem%lnods = INT (param((/ 3:5,9:11,6:8,15:17,12:14 /)))  !connectivities
+   elem%angle = param(j+1)        ! Euler angle between standart and Ortho
+   !    echo according to flag
+   IF(iwrit == 1) WRITE(lures,"(i6,i3,12i6,F7.4)",ERR=9999) &
+                  elem%numel,isec,elem%lnods((/1:3,7:9,4:6,13:15,10:12 /)),elem%angle
+
+   !     original node labels are changed
+   DO i=1,nnode
+     elem%lnods(i) = chnode(elem%lnods(i))
+   END DO
+   ! reserve memory for arrays and initializes
+   ALLOCATE( elem%stint(nstre,ngaus,ngaup),elem%gaus0(7,ngaus,ngaup))
+   elem%stint = 0d0 ; elem%gaus0 = 0d0
+   IF( ansmm == 0 .OR. anssh == 0 )THEN
+     ALLOCATE( elem%ipcdm(nnode,2,nface,ngaup))
+     elem%ipcdm = 0d0
+   END IF
+   IF( ansmm /= 0 .OR. anssh /= 0 )THEN
+     ALLOCATE( elem%jacin(2,2,nface,ngaup))
+     elem%jacin = 0d0
+   END IF
+   IF( anssh > 0 )THEN
+     ALLOCATE( elem%nfdas(nnode,nassp,nface))
+     elem%nfdas = 0d0
+   END IF
+   CALL add_ele29e (elem, heade, taile) !add element to list
+
+ END DO
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE elmd29

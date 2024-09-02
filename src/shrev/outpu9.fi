@@ -1,0 +1,190 @@
+ SUBROUTINE outpu9 (b1,b2,nelem,ngaus,nreqs,narch,iwrit,ntype, &
+                    nstre,ngrqs,ttime,heade,zigzag,zigzpp,estr)
+ !********************************************************************
+ !
+ !**   output routine for beam/shell elements
+ !
+ !********************************************************************
+ USE npo_db,ONLY : coord,coora,euler,psia
+ IMPLICIT NONE
+
+ INTEGER (kind=4) nelem,ngaus,nreqs,narch,iwrit,ntype,nstre
+ INTEGER (kind=4), POINTER :: ngrqs(:)
+ REAL    (kind=8) ttime
+ REAL (kind=8), INTENT(IN OUT) :: estr(:,:)
+ LOGICAL   b1,b2
+ TYPE(ele09), POINTER :: heade
+ LOGICAL, INTENT(IN) :: zigzag,zigzpp
+
+ INTEGER (kind=4) g,i,ielem,nnode,sec1,sec2,sec3
+ REAL    (kind=8) epdef(2,ngaus),aux(2),j1,j2,j3
+ TYPE(ele09), POINTER :: e,ei
+ REAL(kind=8),ALLOCATABLE:: destr(:,:)
+ LOGICAL :: diff
+
+ ! ** writes stress history at requested gauss points at every toutd time
+
+ IF(b1 .AND. (nreqs > 0)) THEN
+   WRITE(narch,ERR=9999) ttime
+   DO i=1,nreqs
+     g = MOD(ngrqs(i)-1,ngaus)+1
+     ielem = (ngrqs(i)-1)/ngaus+1
+     !search
+     e => heade
+     DO
+       IF( e%numel == ielem )EXIT
+       e => e%next
+       IF( .NOT.ASSOCIATED (e) )STOP !error
+     END DO
+     IF( ntype /= 4 .AND. .NOT.zigzag )THEN
+       IF(ASSOCIATED( e%ehist )) THEN
+         epdef(1,1) = e%ehist(2,g)
+         epdef(2,1) = SQRT(e%ehist(3,g))
+       ELSE
+         epdef(:,1) = 0d0
+       END IF
+       WRITE(narch,ERR=9999) e%stres(:,g),epdef(:,1),e%sedef(g)
+     ELSE
+       WRITE(narch,ERR=9999) e%stres(:,g)
+     END IF
+   END DO
+   !CALL flushf(narch)
+ END IF
+
+ ! *** writes stresses on output file
+
+ IF(b2) THEN
+   IF(iwrit == 1) THEN
+     nnode = SIZE(heade%lnods)
+     WRITE(lures,"(5x,'STRESSES FOR BEAM/SHELL 2-D ELEMENTS'/)",ERR=9999)
+       ! PRINT stresses
+     IF( zigzag .OR. zigzpp )THEN
+       IF(ntype == 1) THEN
+         IF( nstre == 5 ) THEN
+           WRITE(lures,"(/,6x,'Element No.',/,6x,16('-')/,1x,'G.P.',5x, &
+           &  'N',11x,'M',11x,'Q',11x,'M_f',8x,'Q_f')",ERR=9999)
+         ELSE IF( nstre == 11) THEN
+           WRITE(lures,"(/,6x,'Element No.',/,6x,16('-')/,1x,'G.P.',5x,'N',11x, &
+           &  'M',11x,'Q',11x,'M_f',9x,'V_f',9x,'M_D',9x,'M_a',9x,'M_d',9x,'V_D',9x,'V_a',9x,'V_d')",ERR=9999)
+         END IF
+         ALLOCATE(destr(nstre,nelem))
+         destr = 0d0
+         e => heade
+         sec1 = 0
+         j1 = 0
+         DO ielem=1,nelem       !compute the derivative at the second node of each element (but last one)
+           sec2 = e%matno
+           IF( ngaus == 1 )THEN
+             j2 = e%jac(1)
+             ei => e%next
+             IF( ASSOCIATED(ei) )THEN
+               sec3 = ei%matno
+               j3 = ei%jac(1)
+             ELSE
+               sec3 = 0
+             END IF
+             IF( sec1 == 0 )THEN !first element
+               destr(:,ielem) =  (estr(:,ielem+1)-estr(:,ielem))/(j2+j3)
+             ELSE IF( sec3 == 0 )THEN !last element
+               destr(:,ielem) =  (estr(:,ielem)-estr(:,ielem-1))/(j1+j2)
+             ELSE IF( sec1 == sec2 .AND. sec2 == sec3 )THEN   ! inner
+               destr(:,ielem) =  ((estr(:,ielem)-estr(:,ielem-1))/(j1+j2) &
+                                 +(estr(:,ielem+1)-estr(:,ielem))/(j2+j3))/2d0
+             ELSE IF( sec1 == sec2 .AND. sec2 /= sec3 )THEN   ! end of a material
+               destr(:,ielem) =  (estr(:,ielem)-estr(:,ielem-1))/(j1+j2)
+             ELSE IF( sec1 /= sec2 .AND. sec2 == sec3 )THEN   ! begin of a material
+               destr(:,ielem) =  (estr(:,ielem+1)-estr(:,ielem))/(j2+j3)
+             ELSE !materials are all different
+               destr(:,ielem) =  ((estr(:,ielem)-estr(:,ielem-1))/(j1+j2) &
+                                 +(estr(:,ielem+1)-estr(:,ielem))/(j2+j3))/2d0
+             END IF
+             j1 = j2
+             sec1 = sec2
+             e => ei
+           ELSE
+             j1 = (e%jac(1)+e%jac(2))*2d0/SQRT(3d0)
+             destr(:,ielem) = (estr(nstre+1:2*nstre,ielem)-estr(1:nstre,ielem))/j1
+             estr(1:nstre,ielem) = (estr(1:nstre,ielem)+estr(nstre+1:2*nstre,ielem))/2d0
+           END IF
+         END DO
+       ELSE
+         WRITE(lures,"(/,6x,'Element No.',/,6x,16('-')/,1x,'g.p.',5x,  &
+         &  'N1',10x,'N2',10x,'M1',10x,'M2',10x,'Q',11x,'M_f',9x,'Q_f'    &
+         &   )",ERR=9999)
+       END IF
+     ELSE
+       IF(ntype == 1) THEN
+         WRITE(lures,"(/,6x,'Element No.',/,6x,16('-')/,1x,'G.P.',5x, &
+         &  'N',11x,'M',11x,'Q',10x,'EPD',7x,'Eq-Str',6x,'h/h0')         &
+         &       )",ERR=9999)
+       ELSE IF(ntype == 2 .OR. ntype == 3 )THEN
+         WRITE(lures,"(/,6x,'Element No.',/,6x,16('-')/,1x,'g.p.',5x,  &
+         &  'N1',10x,'N2',10x,'M1',10x,'M2',10x,'Q',11x,'EPD',7x,'Eq-str',&
+         &  6x,'h/h0' )",ERR=9999)
+       ELSE IF( ntype == 4) THEN
+         WRITE(lures,"(/,6x,'Element No.',/,6x,16('-')/,1x,'G.P.',5x, &
+         &  'N',11x,'Q',11x,'M',11x,'U',11x,'V')",ERR=9999)ielem
+       END IF
+     END IF
+   END IF
+
+   e => heade
+   DO ielem=1,nelem
+     IF(ASSOCIATED( e%ehist) .AND. .NOT.zigzag ) THEN
+       epdef = e%ehist(1:2,:)
+     ELSE
+       epdef = 0d0
+     END IF
+
+     ! writes complete stress state on tape 16
+
+     DO g=1,ngaus
+       IF(ntype /= 4 .AND. .NOT.zigzag) THEN
+         epdef(2,g) = SQRT(ABS(epdef(2,g)))
+         WRITE(16,ERR=9999) e%stres(:,g),epdef(:,g),e%sedef(g)
+       ELSE
+         WRITE(16,ERR=9999) e%stres(:,g)
+       END IF
+     END DO
+     e => e%next
+   END DO
+
+   IF(iwrit == 1) THEN
+     CALL openfi(59)
+     WRITE(59,"('# Resultados para TTIME = ', e15.5)")ttime
+     WRITE(59,"(' VARIABLES = ""Z"", ""S_x"",""t_i"",""t_c"",""u_x""')")
+     e => heade
+     DO ielem=1,nelem
+       IF(ntype /= 4 .AND. .NOT.zigzag .AND. .NOT.zigzpp) THEN
+         DO g=1,ngaus
+           WRITE(lures,"(i5,i2,1x,8e12.4)",ERR=9999)ielem,g,e%stres(:,g),epdef(1:2,g),e%sedef(g)
+         END DO
+       ELSE IF( e%prpro > 0)THEN
+         aux(1) = (coora(1,e%lnods(1))-coord(1,e%lnods(1)) + coora(1,e%lnods(nnode))-coord(1,e%lnods(nnode)))/2d0
+         aux(2) = -(euler(1,e%lnods(1)) + euler(1,e%lnods(nnode)))/2d0
+         DO g=1,ngaus
+           j1 = (coord(1,e%lnods(1)) + coord(1,e%lnods(2)))/2d0
+           WRITE(lures,"(i5,i2,1x,11e12.4)",ERR=9999)ielem,g,e%stres(:,g) !,e%ehist(1:3,g)
+           IF( e%prpro>0 .AND. nstre == 5) CALL zigzag_pro1(ntype,nstre,e%matno,estr(:,ielem),destr(:,ielem),  &
+                          &                 ielem,aux,e%prpro,diff,e%auxil)
+           IF( e%prpro>0 .AND. nstre ==11) CALL zigzag_pro2(ntype,nstre,e%matno,estr(:,ielem),destr(:,ielem),  &
+                          &                 j1,aux,e%prpro)
+         END DO
+         !IF( .NOT. prt .AND.e%ehist(2,1) >= 0.999)THEN
+         !   prt = .TRUE.
+         !   WRITE(58,"(e15.5)")e%ehist(16:,1)
+         !END IF
+         !WRITE(58,"(i5,/,3(3E15.5,/),/,5e16.6)",ERR=9999)ielem,e%ehist(7:15,1),estr(:,ielem)
+         !WRITE(58,"(5e16.6)",ERR=9999)estr(:,ielem)
+       ELSE
+         DO g=1,ngaus
+           WRITE(lures,"(i5,i2,1x,11e12.4)",ERR=9999)ielem,g,e%stres(:,g)
+         END DO
+       END IF
+       e => e%next
+     END DO
+   END IF
+ END IF
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE outpu9

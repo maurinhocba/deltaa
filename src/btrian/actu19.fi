@@ -1,0 +1,51 @@
+ SUBROUTINE actu19(heade)
+
+ ! updates internal variable after convergence
+
+ IMPLICIT NONE
+ TYPE(ele19), POINTER :: heade
+
+ INTEGER (kind=4) :: n,isec,osec,mtype,inc1,nva1,nstr1,g
+ INTEGER (kind=4), PARAMETER :: nvar=5, inc=14, nstre=4
+ REAL(kind=8) :: defps
+ LOGICAL :: newmt
+ TYPE(ele19), POINTER :: e
+ TYPE (section), POINTER :: sec    !pointer to a section data
+
+ osec = -1
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED(e) ) EXIT
+   nva1 = SIZE(e%gausv)
+   IF( nva1 > 1 ) THEN
+     isec = e%matno                   !associated material
+     newmt = osec /= isec             !same material than previous ?
+     IF(newmt)THEN                     !if new material, get properties
+       sec => psecs(isec)%p
+       mtype = sec%mtbas%mtype
+       nva1 = nvar
+       inc1 = inc
+       nstr1= nstre
+       IF( mtype == 1)THEN
+         IF(sec%mtbas%matdef(3) == 2)THEN
+           nva1 = nvar+1
+           inc1 = inc+2
+           nstr1= nstre+1
+         END IF
+       END IF
+       osec = isec                    !keep present material
+     END IF
+     n = 1+nva1   !position of current values
+     DO g=1,ngaus
+       defps = e%gausv(n+nstre,g)  !pointer to increment in plastic strain
+       IF(defps > 0)THEN
+         e%gausv(1:nstr1,g) = e%gausv(n:n+nstr1-1,g) !current into last converged
+         e%gausv(1+nstr1,g) = e%gausv(1+nstr1,g) + defps  !eff. pl. strain
+       END IF
+     END DO
+   END IF
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE actu19

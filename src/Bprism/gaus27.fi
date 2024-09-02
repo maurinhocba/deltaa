@@ -1,0 +1,202 @@
+ SUBROUTINE gaus27(heade,coord,istop,angdf,locax,isg,fpsg,ngaus,ansmm,anssh,easts,nassp,bezier)
+ !----------------------------------------------------------------------------
+ !--- evaluates gauss points constants for solid-shell element 27 Bezier-PRISM
+ !----------------------------------------------------------------------------
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(OUT) :: istop,    & ! error flag to stop execution
+                                  isg(:,:)    ! Gauss points to extrapolate values at external surfaces
+ INTEGER (kind=4), INTENT(IN) :: locax,     & ! code por local system
+                                 ngaus,     & ! number of Gauss point across the thickness
+                                 ansmm,     & ! ANS Membrane Model
+                                 anssh,     & ! ANS SHear model
+                                 easts,     &   ! EAS transverse strain
+                                 nassp
+ REAL (kind=8), INTENT(IN) :: coord(:,:), &   !initial coordinates
+                              angdf           !default angle local axes - Ort_Axes
+ REAL (kind=8), INTENT(OUT) :: fpsg(:,:)       !factor for extrapolation from Gauss points to external surfaces
+ TYPE (ele27), POINTER :: heade               !pointer to first element in the set
+ LOGICAL, INTENT(IN) :: bezier
+
+ INTEGER (kind=4) ielem,iface,ias,g
+ REAL (kind=8) :: shape(nnode),derv(nnode,3,ngaup,ngaud),derm(nnode,3,ngaup,nface), &
+                  ders(nnode,3,ngaup,nface),dersp(nnode,3,nassp,nface),dert(nnode,3,ngaup,nface)
+ REAL (kind=8) :: ang,factor
+ REAL (kind=8) :: x(3,nnode),lb(3,3),a(nasmm,nasmm),b(nasmm,nasmm), a1(nassp,nassp)
+ TYPE (ele27), POINTER :: e           !pointer to an element
+ REAL (kind=8) :: thf(ngaus),   & !G-P positions through the thickness
+                  wei(ngaus)      !G-P weigths
+ INTERFACE
+   INCLUDE 'shape4.h'
+   INCLUDE 'invmtx.h'
+ END INTERFACE
+
+ !     ---------------------------------------------------------
+
+ ! compute auxiliar values to extrapolate at external surfaces from Gauss Points
+ IF( ngaus == 2 )THEN
+   isg=RESHAPE((/1,2,1,2/),(/2,2/))
+   fpsg = RESHAPE((/ 1.366025403784438,-0.366025403784438, &  !extrapolates directly (STP must do nothing)
+                   -0.366025403784438, 1.366025403784438/),(/2,2/))
+ ELSE
+   CALL gaussq(ngaus,thf(1),wei(1)) !integration points through the thickness
+   !extrapolates directly to external surfaces (STP must do nothing, or extrapolate to nodes)
+   isg = RESHAPE((/ 1,2, ngaus-1,ngaus /),(/2,2/))
+   factor = 1.d0+(1d0-thf(ngaus))/(thf(ngaus)-thf(ngaus-1))
+   fpsg = RESHAPE((/ factor, 1d0-factor, 1d0-factor, factor /),(/2,2/))
+   !WRITE(58,"(4i12,/,4e12.4)")isg,fpsg
+ END IF
+ !     ---------------------------------------------------------
+
+ ! nodal function derivatives at faces integration points for (DERV) for DVOLU ------------------
+ DO iface=1,nface+1  ! (/  -zface , +zface , 0d0 /)
+   DO g=1,ngaup
+      CALL shape4(nnode,shape(1),derv(1,1,g,iface),gpcoo(1,g),gpcoo(2,g),gpzv(iface),bezier,.FALSE.)
+   END DO
+ END DO
+
+ ! nodal function derivatives at membrane STRAINS sampling surfaces (DERM) --------------------------
+ IF( ansmm /= 0 )THEN  ! for ANS methods
+   DO iface=1,nface    !derm(1:nnode,1:3,1,1) is used auxiliary here
+     DO ias=1,nasmm         ! derivatives in xita direction
+       CALL shape4(nnode,shape(1),derm(1,1,1,1),ansmp(1,ias),ansmp(2,ias),gpzm(iface),bezier,.FALSE.)
+       SELECT CASE (ias)    !according with the sampling point
+       CASE (1:3)           ! derivatives in xita direction
+         mdtan(:,ias,iface) = derm(:,1,1,1)
+       CASE (4:6)           ! derivatives in eta direction
+         mdtan(:,ias,iface) = derm(:,2,1,1)
+       CASE (7:9)           ! derivatives in t direction
+         mdtan(:,ias,iface) = (-derm(:,1,1,1)+derm(:,2,1,1))/SQRT(2D0)
+       END SELECT
+     END DO
+   END DO
+   a = 0d0             !compute A^-1 and its inverse
+   DO ias=1,nasmm          ! for each sampling point
+     SELECT CASE (ias)       !according with the sampling point
+     CASE (1:3)                !xita direction
+       a(ias,1:3) = (/ 1d0, ansmp(1,ias), ansmp(2,ias) /)         !C_xi_xi
+     CASE (4:6)                ! eta direction
+       a(ias,4:6) = (/ 1d0, ansmp(1,ias), ansmp(2,ias) /)         !C_eta_eta
+     CASE (7:9)                ! t direction
+       a(ias,1:3) = (/ 1d0, ansmp(1,ias), ansmp(2,ias) /)/2d0     !+C_xi_xi   /2
+       a(ias,4:6) = (/ 1d0, ansmp(1,ias), ansmp(2,ias) /)/2d0     !+C_eta_eta /2
+       a(ias,7:9) =-(/ 1d0, ansmp(1,ias), ansmp(2,ias) /)         !-C_xi_eta
+     END SELECT
+   END DO
+   CALL invmtx(a,b,ang,nasmm)                                     !A matrix ==> b
+   ! compute the PRODUCT PA at in-plane Gauss points
+   a = 0d0                                                        !initializes
+   DO g=1,ngaup
+     a(1,1:3) =(/ 1d0, gpcoo(1,g), gpcoo(2,g) /)       ! linear for the three natural components
+     a(2,4:6) = a(1,1:3)
+     a(3,7:9) = a(1,1:3)
+     pagm(:,:,g) = MATMUL( a(1:3,:),b)                 !PA matrix at Gauss point
+   END DO
+   ! PA matrix for deltaC computation
+   pagm2(1:2,:,:) = pagm(1:2,:,:)     !axial values
+   pagm2(3,:,:)   = pagm(3,:,:)*2d0   !shear value
+ END IF
+ ! compute Shape Function derivatives at Gauss points and sampling surfaces ==> DERM
+ ! used for standard displacement formulation or for Inverse in-plane Jacobian computation
+ DO iface=1,nface   !for each sampling surface
+   DO g=1,ngaup       !for each in-plane Gauss point
+     CALL shape4(nnode,shape(1),derm(1,1,g,iface),gpcoo(1,g),gpcoo(2,g),gpzm(iface),bezier,.FALSE.)
+   END DO
+ END DO
+
+ ! nodal function derivatives at Shear STRAINS sampling surfaces (DERS) -----------------------------
+ IF( anssh /= 0 )THEN  ! for ANS methods
+   ! compute derivatives at sampling points  ==> DERSP
+   DO iface=1,nface     ! for each sampling surface
+     DO ias=1,nassp        !for each in-plane sampling point
+       CALL shape4(nnode,shape(1),dersp(1,1,ias,iface),anssp(1,ias),anssp(2,ias),gpzs(iface),bezier,.FALSE.)
+       SELECT CASE (ias)   !according with the sampling point
+       CASE (1:2,7)           !xita direction
+         sdtan(:,ias,iface) = dersp(:,1,ias,iface)
+       CASE (3:4)             ! t direction
+         sdtan(:,ias,iface) = (-dersp(:,1,ias,iface)+dersp(:,2,ias,iface))/SQRT(2d0)
+       CASE (5:6,8)           ! eta direction
+         sdtan(:,ias,iface) = dersp(:,2,ias,iface)
+       END SELECT
+     END DO
+   END DO
+   ! compute matrices A^-1, A, and PA at in-plane Gauss points
+   IF( nassp == nnas1 )THEN   !linear approach
+     a1 = 0d0        !initializes A^-1
+     DO ias=1,nassp  !for each sampling point
+       SELECT CASE (ias)    !according to the sampling point
+       CASE (1:2)             !xita direction
+         a1(ias,1:3) = (/ 1d0, anssp(1,ias), anssp(2,ias) /)
+       CASE (3:4)             ! t direction
+         a1(ias,:)   = (/-1d0,-anssp(1,ias),-anssp(2,ias), 1d0, anssp(1,ias), anssp(2,ias)/)/SQRT(2d0)
+       CASE (5:6)             !eta direction
+         a1(ias,4:6) = (/ 1d0, anssp(1,ias), anssp(2,ias) /)
+      END SELECT
+     END DO
+     CALL invmtx(a1,ams,ang,nassp)  ! A matrix ==>  AMS
+     a = 0d0         !initializes
+     DO g=1,ngaup      !for each in-plane Gauss point
+       a(1,1:3) =(/ 1d0, gpcoo(1,g), gpcoo(2,g) /)   !linear in both directions
+       a(2,4:6) = a(1,1:3)
+       pags(:,1:nassp,g) = MATMUL( a(1:2,1:nassp),ams) !PA matrix at Gauss Points
+     END DO
+   ELSE !( nassp == nnas2 )   ! incomplete Quadratic Approach
+     a1 = 0d0
+     DO ias=1,nassp        !for each sampling point
+       SELECT CASE (ias)     !according with the sampling point
+       CASE (1:2,7)            !xita direction
+         a1(ias,1:4) = (/ 1d0, anssp(1,ias), anssp(2,ias), anssp(1,ias)*anssp(2,ias) /) ; a1(ias,8) = -anssp(2,ias)*anssp(2,ias)
+       CASE (3:4)              ! t direction
+         a1(ias,:)   = (/-1d0,-anssp(1,ias),-anssp(2,ias),-anssp(1,ias)*anssp(2,ias)-anssp(1,ias)*anssp(1,ias),  &
+                          1d0, anssp(1,ias), anssp(2,ias), anssp(1,ias)*anssp(2,ias)+anssp(2,ias)*anssp(2,ias) /)/SQRT(2d0)
+       CASE (5:6,8)            !eta direction
+         a1(ias,5:8) = (/ 1d0, anssp(1,ias), anssp(2,ias), anssp(1,ias)*anssp(2,ias) /) ; a1(ias,4) = -anssp(1,ias)*anssp(1,ias)
+       END SELECT
+     END DO
+     CALL invmtx(a1,ams,ang,nassp)  ! A matrix ==>  AMS
+     DO g=1,ngaup      !for each in-plane Gauss point
+       a(1,1:4) =(/ 1d0, gpcoo(1,g), gpcoo(2,g), gpcoo(1,g)*gpcoo(2,g) /) ; a(1,8) = -gpcoo(2,g)*gpcoo(2,g) !imcomplete quadratic
+       a(2,5:8) =(/ 1d0, gpcoo(1,g), gpcoo(2,g), gpcoo(1,g)*gpcoo(2,g) /) ; a(2,4) = -gpcoo(1,g)*gpcoo(1,g)
+       pags(:,:,g) = MATMUL( a(1:2,1:nassp),ams)   !PA matrix at Gauss Points
+     END DO
+   END IF
+ END IF
+ ! compute Shape Function derivatives at Gauss points and sampling surfaces ==> DERS
+ ! used for standard displacement formulation or for Inverse in-plane Jacobian computation
+ DO iface=1,nface
+   DO g=1,ngaup
+     CALL shape4(nnode,shape(1),ders(1,1,g,iface),gpcoo(1,g),gpcoo(2,g),gpzs(iface),bezier,.FALSE.)
+   END DO
+ END DO
+
+ ! nodal function derivatives at Transvers STRAINS sampling surfaces (DERT) -------------------------
+ DO iface=1,nface
+   DO g=1,ngaup
+     CALL shape4(nnode,shape(1),dert(1,1,g,iface),gpcoo(1,g),gpcoo(2,g),gpzt(iface),bezier,.FALSE.)
+   END DO
+   IF( easts /= 0 )CYCLE  !only at mid-surface
+ END DO
+ !     ---------------------------------------------------------
+
+ factor = ATAN(1d0)/45d0         !pi/180
+
+ e => heade       !point to first element
+ DO               !loop over the elements in the set
+   IF (.NOT.ASSOCIATED (e) ) EXIT  !if all element processed, exit
+
+   x(:,1:nnode) = coord(:,e%lnods(1:nnode))     ! get original coordinates (element nodes)
+   ang = (e%angle+angdf)*factor                 ! angle between local system and standard (in radians)
+   ielem = e%numel                              ! element label
+   CALL lcsy27(lb,x,locax,ang)                  ! compute local shell system
+   ! compute element local systems, nodal functions and derivatives
+   CALL jacob27(derv,derm,ders,dersp,dert,x,lb,ielem,istop,ansmm,anssh,easts,nassp, &
+                e%dvol,e%ipcdm,e%cartd,e%nfdas,e%nf3,e%jacim,e%jacis)
+   CALL stra27( e, x, ansmm, anssh, easts, nassp)
+
+   e%stint = 0d0            !Initializes stresses
+
+   e => e%next          !point to next element
+ END DO
+
+ RETURN
+ END SUBROUTINE gaus27

@@ -1,0 +1,61 @@
+ SUBROUTINE kgmm25 (cd,s,stiff,nvarl)
+ ! simplified version
+ IMPLICIT NONE
+ REAL (kind=8), INTENT(IN) ::  cd(4,2), s(3)
+ REAL (kind=8), INTENT(OUT) :: stiff(*)
+ INTEGER (kind=4), INTENT(IN) :: nvarl
+
+ INTEGER (kind=4) i,j,k,l,n,pos
+ REAL (kind=8) value
+ INTEGER (kind=4) poesti
+ poesti(i,j,n) = (2*n-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+ l = 0      !initializes to first DOF
+ DO i=1,4      !for each node
+   n = l         !position in diagonal term n=l
+   DO j=i,4      !for each node
+     value = + s(1)* cd(i,1)*cd(j,1) + s(2)*cd(i,2)*cd(j,2)  &
+             + s(3)*(cd(i,2)*cd(j,1) +      cd(j,2)*cd(i,1))
+     DO k=1,3    !for each space dimension
+       pos = poesti(l+k,n+k,nvarl)         !position in matrix
+       stiff(pos) = stiff(pos) + value     !add to matrix
+     END DO
+     n = n + 3   !increment DOF position
+   END DO
+   l = l + 3  !increment DOF position
+ END DO
+
+ RETURN
+ END SUBROUTINE kgmm25
+ !----------------------------------------------------------------------
+ SUBROUTINE kgmm25f (cd,s,stiff,nvarl,area)
+ !  Full Version
+ IMPLICIT NONE
+ REAL (kind=8), INTENT(IN) ::  cd(4,2,4), s(3), area(4)
+ REAL (kind=8), INTENT(OUT) :: stiff(*)
+ INTEGER (kind=4), INTENT(IN) :: nvarl
+
+ INTEGER (kind=4) i,j,k,l,n,pos,g
+ REAL (kind=8) value
+ INTEGER (kind=4) poesti
+ poesti(i,j,n) = (2*n-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+ DO g=1,4     !for each side
+   l = 0         !initializes to first DOF
+   DO i=1,4      !for each node
+     n = l         !position in diagonal term n=l
+     DO j=i,4      !for each node
+       value = ( s(1)* cd(i,1,g)*cd(j,1,g) + s(2)*cd(i,2,g)*cd(j,2,g)  &
+               + s(3)*(cd(i,2,g)*cd(j,1,g) +      cd(j,2,g)*cd(i,1,g)))*area(g)
+       DO k=1,3    !for each space dimension
+         pos = poesti(l+k,n+k,nvarl)
+         stiff(pos) = stiff(pos) + value
+       END DO
+       n = n + 3   !increment DOF position
+     END DO
+     l = l + 3  !increment DOF position
+   END DO
+ END DO
+
+ RETURN
+ END SUBROUTINE kgmm25f

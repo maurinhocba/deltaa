@@ -1,0 +1,41 @@
+ SUBROUTINE mbmgp7(xita,eta,stype,nnode,bmatx,bb,jac)
+ !**************************************************************
+ !
+ !     interpolates assumed membrane  associated b matrix
+ !     for element 7
+ !**************************************************************
+ IMPLICIT NONE
+ INTEGER (kind=4), INTENT(IN) :: stype,nnode
+ REAL (kind=8), INTENT(IN) ::  xita,eta,bb(:,:,:),jac(:,:)
+ REAL (kind=8), INTENT(OUT) ::  bmatx(:,:,:)
+
+ INTEGER (kind=4) i,j,n
+ REAL    (kind=8) zeta,aux(3),jb(3,3),sf(3)
+
+ jb(1,1) = jac(1,1)*jac(1,1)
+ jb(2,1) = jac(1,2)*jac(1,2)
+ jb(3,1) = jac(1,1)*jac(1,2)
+ jb(1,2) = jac(2,1)*jac(2,1)
+ jb(2,2) = jac(2,2)*jac(2,2)
+ jb(3,2) = jac(2,1)*jac(2,2)
+ jb(1,3) = jac(2,1)*jac(1,1)*2d0
+ jb(2,3) = jac(1,2)*jac(2,2)*2d0
+ jb(3,3) = jac(1,1)*jac(2,2)+jac(1,2)*jac(2,1)
+ zeta = 1d0-xita-eta
+ IF(stype == 2) THEN
+   sf = (/ zeta, xita, eta/)
+ ELSE
+   sf = 1d0 - 2d0*(/ eta, zeta, xita/)
+ END IF
+ DO n = 1,nnode
+   DO j = 1,3
+     aux(1) = bb(j,n,1)*sf(1) + bb(j,n,2)*sf(2) + bb(j,n,3)*sf(3)
+     aux(2) = bb(j,n,4)*sf(1) + bb(j,n,5)*sf(2) + bb(j,n,6)*sf(3)
+     aux(3) = bb(j,n,7)*sf(1) + bb(j,n,8)*sf(2) + bb(j,n,9)*sf(3)
+     DO i = 1,3
+       bmatx(j,n,i) = DOT_PRODUCT(aux,jb(1:3,i))
+     END DO
+   END DO
+ END DO
+
+ END SUBROUTINE mbmgp7

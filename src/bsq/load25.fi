@@ -1,0 +1,51 @@
+ SUBROUTINE load25 (igrav,force,gvect,gravy,heade)
+ !********************************************************************
+ !
+ !***  evaluates gravity load vector for shell elements BSQ-NBSQ (TLF)
+ !
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4), PARAMETER :: nnode=4
+ INTEGER (kind=4) :: igrav
+ REAL (kind=8) :: force(:,:),gvect(3),gravy
+ TYPE (ele25), POINTER  :: heade
+
+ !        local variable
+
+ INTEGER (kind=4) n,l,isec,osec
+ REAL (kind=8) weigt,fvect(3),fac
+ TYPE (ele25), POINTER :: e
+ TYPE (section), POINTER  :: sec
+
+
+ IF(igrav /= 0) THEN       !if gravity is present
+
+   osec = -1
+   e => heade              !point to first element
+   DO
+     IF (.NOT.ASSOCIATED (e) ) EXIT      !all elements processed, Exit loop
+
+     isec  = e%matno                     !associated material
+     IF( isec /= osec )THEN
+       sec => psecs(isec)%p
+       weigt = gravy*sec%mtbas%prope(5)*sec%rprop(1)  !surface density
+       osec = isec
+     END IF
+     IF(weigt /= 0.0d0) THEN             !if not zero
+
+       fvect = e%area(0)*weigt*gvect     !force vector of total element
+
+       DO n=1,nnode                          !for each node (nnode=4)
+         fac = (e%area(n)+e%area(nextn(n+2)))/2d0  !nodal factor
+         l = e%lnods(n)                            !node number
+         force(1:3,l) = force(1:3,l) + fvect*fac    !sum on global force vector
+       END DO
+     END IF
+
+     e => e%next                       !point to next element
+   END DO
+ END IF
+
+ RETURN
+ END SUBROUTINE load25

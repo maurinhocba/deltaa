@@ -1,0 +1,39 @@
+ SUBROUTINE shap30(xita,eta,shape,deriv,option)
+ IMPLICIT NONE
+ REAL (kind=8) xita,eta,shape(6),deriv(6,2)
+ INTEGER (kind=4), INTENT(IN) :: option
+ REAL (kind=8) zeta
+
+     zeta = 1d0-xita-eta  !third area coordinate
+
+     !*** shape functions
+
+     IF(option >= 0) THEN
+       shape(1) = zeta * zeta
+       shape(2) = xita * xita
+       shape(3) = eta  * eta
+       shape(4) = 2d0* eta  * xita
+       shape(5) = 2d0* zeta * eta
+       shape(6) = 2d0* xita * zeta
+     END IF
+
+     !*** and derivatives
+
+     IF(option <= 0) THEN
+       deriv(1,1) = -2d0*zeta
+       deriv(2,1) =  2d0*xita
+       deriv(3,1) =  0d0
+       deriv(4,1) =  2d0*eta
+       deriv(5,1) = -2d0*eta
+       deriv(6,1) =  2d0*(zeta-xita)
+
+       deriv(1,2) = -2d0*zeta
+       deriv(2,2) =  0d0
+       deriv(3,2) =  2d0*eta
+       deriv(4,2) =  2d0*xita
+       deriv(5,2) =  2d0*(zeta-eta)
+       deriv(6,2) = -2d0*xita
+     END IF
+
+ RETURN
+ END SUBROUTINE shap30

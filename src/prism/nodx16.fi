@@ -1,0 +1,127 @@
+ SUBROUTINE nodx16(nelem,nnode,heade,coord,cpx,bezier)
+ !*********************************************************************
+ !
+ !     computes Control points  for n-node Bezier Prism
+ !
+ !*********************************************************************
+ USE npo_db, ONLY : coora,coorc  !,coori
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: nelem,nnode
+ INTEGER (kind=4), INTENT(IN OUT) :: cpx(:,:)
+ REAL    (kind=8), INTENT(IN OUT) :: coord(:,:)
+ LOGICAL, INTENT(IN) :: bezier
+ TYPE(ele16), POINTER :: heade
+ !local variables
+ REAL    (kind=8) :: x(3,nnode)
+ INTEGER (kind=4) i,ii,j,jj,k,l,n,m,f,kk
+ TYPE(ele16), POINTER :: e
+ INTEGER (kind=4) :: id(2,9) =(/ 1,2, 2,3, 3,1, 1,4, 2,5, 3,6, 4,5, 5,6, 6,4 /)
+
+ IF( nnode == 15 )kk=2
+ IF( nnode == 18 )kk=1
+ e => heade   ! point to first element
+ DO n = 1,nelem      !loop over all the elements
+   x = coord(:,e%lnods)     !get original coordinates
+   IF( bezier ) THEN
+     j = 6                 !bottom face
+     jj = 0
+     DO f = 1,2             !for each face
+       DO k = 1,3             !for each side
+         ii = k+j                !mid-side node (position)
+         i = e%lnods(ii)         !mid side node (internal node)
+         IF( cpx(1,i) == 1 )THEN         !if already computed
+           cpx(1,i) = -1              ! inner node (paired)
+         ELSE                       !not computed yet
+           l = k+jj           ! first node of the side
+           m = MOD(k,3)+1+jj  ! third node of the side
+           IF(ALL(x(:,ii) == 0d0) ) THEN      !generate coordinates?
+             x(:,ii) = (x(:,l)+x(:,m))/2d0
+           ELSE                       !compute control point coordinates
+             x(:,ii) = 2d0*coord(:,i) - (x(:,l)+x(:,m))/2d0
+           END IF
+           ! initializes others coordinate arrays
+           coord(:,i) = x(:,ii)
+           coora(:,i) = x(:,ii)
+           coorc(:,i) = x(:,ii)
+           !coori(:,i) = x(:,ii)
+           cpx(1:3,i) = (/ 1, e%lnods(l), e%lnods(m) /)  !set as boundary node (not paired yet), and keep vertex
+         END IF
+       END DO
+       j = 12               !top face
+       jj = 3
+       IF( nnode == 12 ) j = 9
+     END DO
+     IF( nnode > 12 ) THEN
+       j = 9                !middle face
+       DO k = 1,3             !for each arista
+         ii = k+j
+         i = e%lnods(ii)           !mid side node
+         IF( cpx(1,i) /= 0 )THEN         !if already computed
+           cpx(1,i) = -kk           ! inner node (paired)
+         ELSE                       ! not computed yet
+           l = e%lnods(k)           ! node on bottom surface
+           m = e%lnods(k+3)         ! node on top surface
+           IF(ALL(x(:,ii) == 0d0) ) THEN      !generate coordinates?
+             x(:,ii) = (coord(:,l)+coord(:,m))/2d0
+           ELSE                       !compute control point coordinates
+             IF(kk == 2 )THEN
+               x(:,ii) = 4d0*coord(:,i) - 1.5d0*(coord(:,l)+coord(:,m))
+             ELSE IF(kk == 1 )THEN
+               x(:,ii) = 2d0*coord(:,i) - (coord(:,l)+coord(:,m))/2d0
+             END IF
+           END IF
+           ! initializes others coordinate arrays
+           coord(:,i) = x(:,ii)
+           coora(:,i) = x(:,ii)
+           coorc(:,i) = x(:,ii)
+           !coori(:,i) = x(:,ii)
+           cpx(1:3,i) = (/ kk, l, m /)  !set as boundary node (not paired yet), and keep vertex
+         END IF
+       END DO
+       DO k=16,nnode
+         i = e%lnods(k)            !mid face node
+         IF( cpx(1,i) == 3 )THEN         !if already computed
+           cpx(1,i) = -3              ! inner node (paired)
+         ELSE                       ! not computed yet
+           l = MOD(k-1,3)+1         ! previous node
+           m = MOD(l,3)+1           ! next node
+           IF(ALL(x(:,k) == 0d0) ) THEN      !generate coordinates?
+             coord(:,i) = (x(:,l)+x(:,m)+x(:,l+3)+x(:,m+3))/4d0
+           ELSE                       !compute control point coordinates
+             coord(:,i) = 4d0*x(:,k) - 0.25d0*(x(:,l  )+x(:,m  )+x(:,l+3)+x(:,m+3)+  &
+                                          2d0*(x(:,l+6)+x(:,l+9)+x(:,m+9)+x(:,l+12)))
+           END IF
+           ! initializes others coordinate arrays
+           coora(:,i) = coord(:,i)
+           coorc(:,i) = coord(:,i)
+           cpx(1:3,i) = (/ 3, e%lnods(l), e%lnods(m+3) /)  !set as boundary node (not paired yet), and keep two opposite nodes
+         END IF
+       END DO
+     END IF
+   ELSE   ! Lagrangean element
+     ! generate midside nodes coordinates for serendipit element
+     DO i=7,MIN(nnode,15)
+       IF( ALL(x(:,i) == 0d0) )THEN
+         k = i-6
+         x(:,i) = (x(:,id(1,k))+x(:,id(2,k)))/2d0
+         coord(:,e%lnods(i)) = x(:,i)
+         coora(:,e%lnods(i)) = x(:,i)
+         coorc(:,e%lnods(i)) = x(:,i)
+       END IF
+     END DO
+     DO i=16,nnode
+       IF( ALL(x(:,i) == 0d0) )THEN
+         j = i-15
+         jj = MOD(j,3)+1
+         x(:,i) = (x(:,j)+x(:,jj)+x(:,j+3)+x(:,jj+3))/4d0
+         coord(:,e%lnods(i)) = x(:,i)
+         coora(:,e%lnods(i)) = x(:,i)
+         coorc(:,e%lnods(i)) = x(:,i)
+       END IF
+     END DO
+   END IF
+   e => e%next
+ END DO
+ RETURN
+ END SUBROUTINE nodx16

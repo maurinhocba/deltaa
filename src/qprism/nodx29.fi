@@ -1,0 +1,66 @@
+ SUBROUTINE nodx29(nelem,heade,coord,cpx)
+ !*********************************************************************
+ !
+ !     computes Control points  for 6-node Bezier TRIANgles
+ !
+ !*********************************************************************
+ USE npo_db, ONLY : coora,coori,coorc
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: nelem
+ INTEGER (kind=4), INTENT(IN OUT) :: cpx(:,:)
+ REAL    (kind=8), INTENT(IN OUT) :: coord(:,:)
+ TYPE(ele29), POINTER :: heade
+ !local variables
+ INTEGER (kind=4) i,j,k,l,n,m,f
+ TYPE(ele29), POINTER :: e
+
+ e => heade   ! point to first element
+ DO n = 1,nelem      !loop over all the elements
+   j = 0                 !bottom face
+   DO f = 1,2             !for each face
+     DO k = 1,3             !for each side
+       i = e%lnods(k+3+j)         !mid side node
+       IF( cpx(1,i) == 1 )THEN         !if already computed
+         cpx(1,i) = -1              ! inner node (paired)
+       ELSE                       !not computed yet
+         l = e%lnods(k+j)           ! first node of the side
+         m = e%lnods(MOD(k,3)+1+j)  ! third node of the side
+         IF(ALL(coord(:,i) == 0d0) ) THEN      !generate coordinates?
+           coord(:,i) = (coord(:,l)+coord(:,m))/2d0
+         ELSE                       !compute control point coordinates
+           coord(:,i) = 2d0*coord(:,i) - (coord(:,l)+coord(:,m))/2d0
+         END IF
+         ! initializes others coordinate arrays
+         coora(:,i) = coord(:,i)
+         coorc(:,i) = coord(:,i)
+         coori(:,i) = coord(:,i)
+         cpx(1:3,i) = (/ 1, l, m /)  !set as boundary node (not paired yet), and keep vertex
+       END IF
+    END DO
+    j = 6                !top face
+  END DO
+  j = 12               !middle face
+  DO k = 1,3             !for each arista
+    i = e%lnods(k+j)           !mid side node
+    IF( cpx(1,i) /= 0 )THEN    !if already computed
+      cpx(1,i) = -2            ! inner node (paired)
+    ELSE                       ! not computed yet
+      l = e%lnods(k)           ! node on bottom surface
+      m = e%lnods(k+6)         ! node on top surface
+      IF(ALL(coord(:,i) == 0d0) ) THEN      !generate coordinates?
+        coord(:,i) = (coord(:,l)+coord(:,m))/2d0
+      ELSE                       !compute control point coordinates
+        coord(:,i) = 4d0*coord(:,i) - 1.5d0*(coord(:,l)+coord(:,m))
+      END IF
+      ! initializes others coordinate arrays
+      coora(:,i) = coord(:,i)
+      coorc(:,i) = coord(:,i)
+      !coori(:,i) = x(:,ii)
+      cpx(1:3,i) = (/ 2, l, m /)  !set as boundary node (not paired yet), and keep vertex
+    END IF
+  END DO
+  e => e%next
+ END DO
+ RETURN
+ END SUBROUTINE nodx29

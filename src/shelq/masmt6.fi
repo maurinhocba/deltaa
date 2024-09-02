@@ -1,0 +1,113 @@
+ SUBROUTINE masmt6(ndime,heade,emass,mass,sumat,lumpd,ifpre,zigzag)
+ !********************************************************************
+ !
+ !***  evaluates mass matrix for shell/quad elements
+ !
+ !********************************************************************
+
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd,zigzag
+ INTEGER (kind=4), INTENT(IN) :: ndime,ifpre(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele06 ), POINTER :: heade
+
+ !        local variables
+ TYPE( ele06 ), POINTER :: e
+ INTEGER (kind=4), PARAMETER :: ndofe = 5
+ INTEGER (kind=4) g,i,j,k,l,m,n,nposn,isec,idof,lm(30),nvar,osec
+ REAL    (kind=8) dvolu,a(21),tmass,rmass,ms(465),sume1,mm(nnode),thick,ix(0:2),im(2)
+ TYPE (section), POINTER :: sec
+ INTEGER (kind=4) poesti
+ poesti(i,j,n) = (2*n-i)*(i-1)/2+j    ! position i,j in ms(nxn)
+
+ osec = -1
+ sume1 = 0d0
+ nvar = nnode*ndofe
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED (e) )EXIT
+   isec = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     thick = sec%rprop(1)
+     tmass = sec%rprop(5)      ! surface density
+     rmass = tmass*thick**2/12d0
+     IF( sec%secty == 15 .AND. zigzag ) ix = sec%rprop(74:76)
+     osec   = isec                    !update previous material
+   END IF
+
+   mm = 0d0
+   IF(.NOT.lumpd) THEN
+     nposn = nnode*(nnode+1)/2
+     a(1:nposn) = 0d0
+   END IF
+
+   DO g = 1,ngaus
+     dvolu = e%dvolu(g)
+     i = 0
+     sume1 = sume1 + dvolu*tmass
+     DO n = 1,nnode
+       mm(n) = mm(n) + shape(n,g)*dvolu
+       IF(.NOT.lumpd) THEN
+         DO l = n,nnode
+           i = i+1
+           a(i) = a(i) + shape(n,g)*shape(l,g)*dvolu
+         END DO
+       END IF
+     END DO
+   END DO
+
+   !Lumped mass matrix, Sums over EMASS(ndofn,npoin)
+   DO n = 1,nnode
+     l = e%lnods(n)
+     DO idof = 1,ndime
+       emass(idof,l) = emass(idof,l) +  mm(n)*tmass
+     END DO
+     DO idof = ndime+1,ndofe
+       emass(idof,l) = emass(idof,l) +  mm(n)*rmass
+     END DO
+     IF( zigzag )THEN
+       im(1) = ix(1)*e%nangl(1,n)**2 + ix(2)*e%nangl(2,n)**2
+       im(2) = ix(2)*e%nangl(1,n)**2 + ix(1)*e%nangl(2,n)**2
+       emass(7,l) = emass(7,l)+mm(n)*im(1)
+       emass(8,l) = emass(8,l)+mm(n)*im(2)
+     END IF
+   END DO
+   IF(.NOT.lumpd) THEN !consistent mass matrix  Assembles over MASS(maxa)
+     nposn = nvar*(nvar+1)/2
+     ms(1:nposn) = 0d0
+     i = 0
+     g = 0
+     DO n = 1,nnode
+       j = (n-1)*ndofe
+       m = e%lnods(n)
+       DO l = n,nnode
+         i = i+1
+         k = (l-1)*ndofe
+         DO idof = 1,ndime
+           nposn = poesti(j+idof,k+idof,nvar)
+           ms(nposn) = a(i)*tmass
+         END DO
+         !   this is not the correct mass matrix for rotational dof
+         DO idof = ndime+1,ndofe
+           nposn = poesti(j+idof,k+idof,nvar)
+           ms(nposn) = a(i)*rmass
+         END DO
+       END DO
+       DO j = 1,ndofe
+         nposn = ifpre(j,m)
+         g = g+1
+         lm(g) = nposn
+       END DO
+     END DO
+     CALL ensmat(nvar,lm(1),ms(1) ,mass(1))
+   END IF
+   e => e%next
+ END DO
+
+ !IF(iwrit == 1) &
+ WRITE(lures,"(//'  total mass for shell element :', e15.7)")sume1
+ sumat = sumat + sume1
+
+ RETURN
+ END SUBROUTINE masmt6

@@ -1,0 +1,68 @@
+ SUBROUTINE kgmm29 (s,stiff,ansmm,ipcdm)
+ !
+ ! compute geometric stiffness for Q-PRISM - Quadratic ANS
+ !
+ IMPLICIT NONE
+ ! dummy arguments
+ REAL (kind=8), INTENT(IN) ::  s(:,:,:)          !(3,3,2) integrated stresses
+ REAL (kind=8), INTENT(OUT) :: stiff(:)  !stiffness matrix
+ INTEGER (kind=4), INTENT(IN) :: ansmm
+ REAL (kind=8), POINTER, INTENT(IN) ::  ipcdm(:,:,:,:)  !(6,2,2,3) In-Plane Cartesian Derivatives for Membrane
+ ! local variables
+ INTEGER (kind=4) i,j,k,l,n,pos,nv2,face,vert,gp
+ REAL (kind=8) :: value, s1,s2,s3,s4,s5,s6,s7,s8,s9
+ INTEGER (kind=4) poesti
+ poesti(nv2,i,j) = (nv2-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+ nv2 = 6*nnode   !twice the number of DOFs
+ DO face=1,2     !for each face
+   SELECT CASE (ansmm)
+
+   CASE (0)       ! standard displacement formulation
+     DO i=1,nnode       ! for each node with contribution
+       n = 3*(i - 1)     ! initializes DOF position I
+       DO j=i,nnode     ! for each node with contribution
+         l = 3*(j - 1)     ! initializes DOF position J
+         value = 0d0
+         DO gp=1,3     !for each sampling point
+           value = value                                                 &
+                 + s(1,gp,face)* ipcdm(i,1,face,gp)*ipcdm(j,1,face,gp)   &
+                 + s(2,gp,face)* ipcdm(i,2,face,gp)*ipcdm(j,2,face,gp)   &
+                 + s(3,gp,face)*(ipcdm(i,2,face,gp)*ipcdm(j,1,face,gp)   &
+                 +               ipcdm(j,2,face,gp)*ipcdm(i,1,face,gp))
+         END DO
+         DO k=1,3    ! for each DOF (diagonal only)
+           pos = poesti(nv2,n+k,l+k)   ! (I,J)
+           stiff(pos) = stiff(pos) + value
+         END DO
+       END DO
+     END DO
+
+   CASE (2)       ! mid side point of each sub-triangle used as sampling point
+     s1 = s(1,1,face) ;  s2 = s(2,1,face) ; s3 = s(3,1,face)
+     s4 = s(1,2,face) ;  s5 = s(2,2,face) ; s6 = s(3,2,face)
+     s7 = s(1,3,face) ;  s8 = s(2,3,face) ; s9 = s(3,3,face)
+     DO i=1,nnode       ! for each node with contribution
+       n = 3*(i - 1)     ! initializes DOF position I
+       DO j=i,nnode     ! for each node with contribution
+         l = 3*(j - 1)     ! initializes DOF position J
+         value = s1*ntan2(i,1,face )*ntan2(j,1,face )  &
+               + s2*ntan2(i,2,face )*ntan2(j,2,face )  &
+               + s3*ntan2(i,3,face )*ntan2(j,3,face )  &
+               + s4*ntan2(i,4,face )*ntan2(j,4,face )  &
+               + s5*ntan2(i,5,face )*ntan2(j,5,face )  &
+               + s6*ntan2(i,6,face )*ntan2(j,6,face )  &
+               + s7*ntan2(i,7,face )*ntan2(j,7,face )  &
+               + s8*ntan2(i,8,face )*ntan2(j,8,face )  &
+               + s9*ntan2(i,9,face )*ntan2(j,9,face )
+         DO k=1,3    ! for each DOF (diagonal only)
+           pos = poesti(nv2,n+k,l+k)   ! (I,J)
+           stiff(pos) = stiff(pos) + value
+         END DO
+       END DO
+     END DO
+   END SELECT
+ END DO
+
+ RETURN
+ END SUBROUTINE kgmm29

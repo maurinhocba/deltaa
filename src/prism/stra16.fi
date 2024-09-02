@@ -1,0 +1,96 @@
+ SUBROUTINE stra16(quad,shell,sides,ngaus,nnode,nassp,x,cartd,cdq,nfdas,nfnda, &
+                   pag,sh,jacin,stra0)
+ IMPLICIT NONE
+ ! dummy arguments
+ LOGICAL, INTENT(IN) :: quad,shell,sides(:)
+ INTEGER(kind=4) :: ngaus,nnode,nassp
+ REAL(kind=8), INTENT(IN) :: x(:,:),cartd(:,:,:),cdq(:,:,:,:),nfdas(:,:,:),nfnda(:,:,:), &
+                             pag(:,:,:),sh(:,:),jacin(:,:,:)
+ REAL(kind=8), INTENT(OUT) :: stra0(:,:)
+ ! local variables
+ INTEGER(kind=4) :: i,ii,j,jj,k,kk,l,ngaup,ngaud
+ REAL (kind=8), ALLOCATABLE :: tq(:,:,:,:), &  !in-plane gradient at mid-side points
+                               cq(:,:),     &!average in-plane metric tensor at faces
+                               tas(:,:),    &
+                               gas(:,:),    &
+                               vas(:,:)
+ REAL(kind=8) :: stran(6),g(3,3),staux(3),vasg(nassp)
+
+ IF( MOD(ngaus,2) == 0 ) THEN
+   ngaud = 2
+   ngaup = ngaus/ngaud
+ ELSE
+   ngaud = 3
+   ngaup = (ngaus+2)/ngaud
+ END IF
+
+   IF( quad )THEN         !for quadratic approach
+     ALLOCATE(tq(3,2,3,2),         &  !local in-plane deformation gradient at face sides
+            cq(3,2))                  !average metric tensor at each face
+     cq = 0d0  ! initializes average in-plane metric tensor at each face
+     DO ii=1,2 ! for each face
+       i = 3*ii-2      !first node of the face
+       j = i+5
+       DO jj=1,3  !for each mid side point
+         tq(:,1:2,jj,ii) = MATMUL(x(:,i:i+2),cdq(1:3,1:2,jj,ii))
+         IF( sides(jj) )THEN  !add extra nodes if side element exist
+           tq(:,1,jj,ii) = tq(:,1,jj,ii) + x(:,j+jj)*cdq(4,1,jj,ii)
+           tq(:,2,jj,ii) = tq(:,2,jj,ii) + x(:,j+jj)*cdq(4,2,jj,ii)
+         END IF
+         cq(1,ii) = cq(1,ii) + DOT_PRODUCT(tq(:,1,jj,ii),tq(:,1,jj,ii)) !C11
+         cq(2,ii) = cq(2,ii) + DOT_PRODUCT(tq(:,2,jj,ii),tq(:,2,jj,ii)) !C22
+         cq(3,ii) = cq(3,ii) + DOT_PRODUCT(tq(:,1,jj,ii),tq(:,2,jj,ii)) !C12
+       END DO
+     END DO
+     cq = cq/3d0               !average metric tensor at faces
+   END IF
+   IF( shell )THEN !compute transverse shear strain components
+     ALLOCATE(tas(3,nassp),         &
+              gas(3,nassp),         &
+              vas(nassp,2))
+     DO k=1,2      ! for each gauss point in zeta direction
+       tas(:,:) = MATMUL(x(:,1:nnode),nfdas(:,:,k))  !der x/x_3
+       DO i=1,nassp
+         gas(:,i) = MATMUL(x(:,1:nnode),nfnda(:,i,k)) !der x/tan
+         vas(i,k) = DOT_PRODUCT(tas(:,i),gas(:,i))
+       END DO
+     END DO
+   END IF
+   !   check
+   !   Gauss point loop
+   k = 0
+   DO l=1,ngaud             !second Gauss loop
+     DO kk=1,ngaup           !second Gauss loop
+       k = k+1
+       ! compute deformation gradient F and U^2=tp(F) F
+       g = MATMUL(x(:,1:nnode),cartd(:,:,k))  !deformation gradient
+       !  in-plane components
+       IF( quad )THEN !interpolate from lower and upper surfaces
+         stran(1) = sh(1,k)*cq(1,1) + sh(2,k)*cq(1,2)              !U^2(1,1)
+         stran(2) = sh(1,k)*cq(2,1) + sh(2,k)*cq(2,2)              !U^2(2,2)
+         stran(4) = sh(1,k)*cq(3,1) + sh(2,k)*cq(3,2)              !U^2(1,2)
+       ELSE
+         stran(1) = g(1,1)*g(1,1) + g(2,1)*g(2,1) + g(3,1)*g(3,1)  !U^2(1,1)
+         stran(2) = g(1,2)*g(1,2) + g(2,2)*g(2,2) + g(3,2)*g(3,2)  !U^2(2,2)
+         stran(4) = g(1,1)*g(1,2) + g(2,1)*g(2,2) + g(3,1)*g(3,2)  !U^2(1,2)
+       END IF
+       ! out-of-plane components
+       stran(3) = g(1,3)*g(1,3) + g(2,3)*g(2,3) + g(3,3)*g(3,3)  !U^2(3,3)
+       IF( shell )THEN  !shell version
+         vasg = vas(:,1)*sh(1,l)+vas(:,2)*sh(2,l)
+         staux(1:2) = MATMUL(pag(:,:,kk),vasg)
+         stran(5) = jacin(1,1,k)*staux(1)+jacin(2,1,k)*staux(2) !x_1-x_3
+         stran(6) = jacin(1,2,k)*staux(1)+jacin(2,2,k)*staux(2) !x_2-x_3
+       ELSE  !standard version
+         stran(5) = g(1,1)*g(1,3) + g(2,1)*g(2,3) + g(3,1)*g(3,3)  !U^2(1,3)
+         stran(6) = g(1,2)*g(1,3) + g(2,2)*g(2,3) + g(3,2)*g(3,3)  !U^2(2,3)
+       END IF
+       stra0(1:3,k) = stran(1:3) - 1d0
+       stra0(4:6,k) = stran(4:6)
+       IF( ngaus == 7 .AND. l == 2 .AND. kk == 1 )EXIT
+     END DO
+   END DO
+   IF( quad ) DEALLOCATE(tq,cq)
+   IF( shell )  DEALLOCATE(tas,gas,vas)
+   RETURN
+ END SUBROUTINE stra16

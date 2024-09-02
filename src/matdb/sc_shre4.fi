@@ -1,0 +1,637 @@
+ SUBROUTINE sc_shre4( sec )
+ !            --------------------------------
+ !            input material properties for sandwich lamina
+ !            Total Lagrangean Shear deformable elements
+ !            shear deformable 2-D shell/beam (SHREV)
+ !
+ !  iprop: 1 :nlayr = 4
+ !         2 :nvars:  number of internal variables for the whole laminate (NOT YET)
+ !         3 :0  elastic lamina,  1:inelastic
+ !         4 :0  RZT  1 RZT3
+ !         5 :3  layer to compute delamination
+ !    6:5+nl :associated material label to each layer
+ !
+ !  rprop  1 : thick
+ !         2 : mean young modulus
+ !         3 : mean density
+ !         4 : width  for 2-D Beam Element
+ !         5 : surface density
+ !      6-9  : ( 4) FSDT
+ !     10-14 : ( 5) in-plane integrated matrices associated with additional DOFs (RZT or other)
+ !     15-37 : (23) transverse integrated matrices associated with additional DOFs (RZT ++ )
+ !
+ !            Version for BEAM only (NTYPE=1) 30 components (19 + 11)
+ !            E1 M1 Q1 Mf QF MD M2 M3 QD Q2 Q3
+ !             6  8    12    18 22 27
+ !                7    11    17 21 26
+ !                   9    14          30 0. 35
+ !                     10    16 20 25
+ !                        13          29 0. 34
+ !                           15 0. 0.
+ !                              19 24
+ !                                 23
+ !                                    28 0. 0.
+ !                                       31 33
+ !                                          32
+ ! 36  Shear Correction Factor
+ ! 37  C Coef
+ ! 38  Damage Factor
+ ! 39  function derivative + 1
+ ! 40  modulus G1
+ ! 41  Strength/G1
+ ! 42  Constant A
+ ! 43-44 Im*width            !for explicit versión more inertias are necessary
+ !
+ ! SCF below is for Shear Correction Factor
+
+ USE ctrl_db, ONLY : ntype
+ IMPLICIT NONE
+ TYPE (section), POINTER :: sec
+
+ ! material types allowed for this section
+ INTEGER (kind=4), PARAMETER :: npl = 9     !number of real values per layer
+ INTEGER (kind=4), PARAMETER :: matsa(2) = (/1,5/)  ! material types allowed for this section
+ INTEGER (kind=4) matno,nlayr,ith,il,sizer,sizei,imat,k,inter,i0,i,ii,lcomp
+ INTEGER (kind=4) nvars
+ REAL(kind=8) :: thick,width,ccoef,damfc,youn,dens,thickl,de(30),zl,celoc(6),gi,g1,g2,   &
+                 f11,f1,f2,sf,thicks,im(0:1),ce(4), stren,frene,be,fi,p2,p3,hip,p3h,  &
+                 dp2,dp3h,v1,v2,v3,vo,xa,xb,xc,w0,x0,z,z2
+
+ LOGICAL :: found,compute
+ REAL(kind=8) :: za,ia,ra,ga,da,den,zk    !for shear factors computation
+ REAL(kind=8), ALLOCATABLE :: rprop(:,:),phi(:),beta(:),as(:,:),gv(:),fs(:)
+ TYPE (mater), POINTER :: mat
+ TYPE (postv), POINTER :: var1,var2 !pointers to postprocess variables
+
+ compute = .FALSE.
+ lcomp   = 0
+
+ sec%secty = 46         !Laminated shell of revolution
+ sec%mabas = -1         !flag to indicate that no unique associated material exist
+
+ CALL listen('SHREV4')  !read a line
+
+
+ sizer = 50             ! minimum size of real array
+ thick = getrea('THICK ',0.D0,' Thickness ........................')
+ if( ntype == 1 )THEN
+   width = getrea('WIDTH ', 1.d0,' Width for 2-D Beam Element........')
+   ccoef = getrea('CCOEF ',.05d0,' C coefficient for hyperbolic .....')
+   damfc = getrea('DAMFC ',1.d-3,' Damage factor for 3rd layer ......')
+ ELSE
+   STOP 'NTYPE must be 1: Plane stress'
+   !width = 1d0
+ END IF
+ IF( thick > 0d0 ) THEN
+   ith=1 ! thickl will be input as a percentage of thick
+ ELSE
+   ith=0 ! thickl will be input as a Real dimension
+ END IF
+ thicks = 0d0 !initializes thickness to check
+ nlayr  = getint('NLAYR ',   4,' NUMBER OF LAYERS .................')
+ IF ( nlayr /= 4) CALL runend('SHREV4: VERIFY NUMBER OF LAYERS, must be 4  ')
+ sizei =  5+nlayr                  !size of integer array
+ ALLOCATE (sec%iprop(sizei), rprop(2,nlayr), gv(nlayr+3) )
+ sec%iprop = 0   !initializes
+ rprop = 0d0     !initializes
+ sf = getrea('SHEARF',0.00000D0,' Shear Factor .....................') !for FSDT
+ IF( sf == 0D0 )THEN
+   WRITE(lures,"(/,' Computed Shear Correction Factors will be used',/)")
+ ELSE
+   WRITE(lures,"(/,' Data Shear Correction Factors will be used',/)")
+ END IF
+
+ sec%iprop(4)  = getint('INTERP',   0,' Interpolation function ...........')
+ inter = sec%iprop(4)
+ SELECT CASE (inter)
+ CASE(0)
+   WRITE(lures,"(/,' R E F I N E D   Z I G Z A G   A P P R O A C H',/)")
+ CASE(1)
+   WRITE(lures,"(/,' RZT + cuadratic and cubic smeared approach ',/)")
+   ALLOCATE( as(nlayr+3,nlayr+3),fs(0:nlayr) )
+ CASE DEFAULT
+   STOP ' inter must be 0:RZT or 1:RZT3'
+ END SELECT
+ ALLOCATE (phi(-2:nlayr),beta(nlayr))
+
+ youn = 0d0            !Initializes mean young modulus
+ dens = 0d0            !Initializes mean density
+ ii  = 6               !pointer to integer array
+ im = 0d0              !rot inertia
+
+ za = 0d0              !SCFV initializes for neutral surface computation NUM
+ den = 0d0             !SCFV DEN
+
+ gi = 0d0              !average values of trasnverse modulus RZT
+
+ DO il=1,nlayr         !for each layer
+   ! read layer information
+   CALL listen('SHREV4')  !read a line
+   matno    = getint('NUMAT ', 1 ,'!Associated Material ..............')
+   CALL mat_search(matno,found,mat,imat)        !search base material
+   IF(.NOT.found) CALL runend ('SHREV4: NOT FOUND ASSOCIATED MATERIAL ')
+   IF( .NOT.ANY( mat%mtype == matsa) ) &  !check if base material is correct
+            CALL runend('SHREV4: Invalid material association')
+   sec%iprop(ii)       = imat     !store associated material index (in PMATS)
+   IF(ith == 0) THEN   !thicknes must be computed
+     thickl = getrea('THICKL',1.D0,'!LAYER THICKNESS ..................')
+     thick  = thick + thickl         ! sum layer thickness
+   ELSE                !thickness is known
+     thickl = getrea('THICKL',1.D+2/nlayr,' LAYER THICKNESS ( % ).............')
+     thickl = thick * thickl *1.D-2   ! compute layer thickness
+   END IF
+   thicks = thicks + thickl           !to check and present position
+   IF( exists("COMPUT")) THEN
+     Compute = .TRUE.
+     lcomp = il
+     IF( il /= 3 )STOP 'damaged layer must be the third presently'
+   END IF
+   youn = youn + thickl*mat%prope(1)  !mean young modulus
+   dens = dens + thickl*mat%prope(5)  !surface density
+   rprop(1,il) = thickl               !store layer thickness (real dimension)
+   !compute average values
+   SELECT CASE (mat%mtype)
+   CASE(1)   !isotropic
+     da = mat%prope(1)                       !SCFV E/(1-nu^2)
+     !IF( ntype /= 1 )da = da/(1d0-mat%prope(2)**2)    !SCFV E/(1-nu^2)
+     gv(il) = mat%prope(3)
+   CASE(5)   !orthotropic
+     gv(il) = mat%prope(13)                                           !RZT G13
+     !SCF use plane stress orthotropic matrix from database (prope(16:19)
+     !IF( ntype == 1 ) THEN
+       da = mat%prope(7)                                              !SCFV E1
+     !ELSE
+     !  da = mat%prope(16)                                             !SCFV D11
+     !END IF
+   END SELECT
+   gi = gi+thickl/gv(il)               ! Int 1/G
+   den = den + da*thickl                             !SCFV
+   za  = za  + da*thickl*(thicks-thickl/2d0)         !SCFV
+   ii = ii+1                           !updates pointer to integer array
+ END DO
+ IF( ith == 1 .AND. ABS(thicks/thick - 1d0) > 0.001 )THEN
+   WRITE(lures,"(' layers thickness sums',f8.4,'%')")thicks/thick*1d2
+   CALL runend('SHREV4: Sum of layers /= 100%')
+ END IF
+ sec%iprop(5)    = lcomp    !store layer to compute shear stress
+
+!! ad-hoc functions *begin*
+!thicks = 0d0        ! initializes
+!i0 = 1              ! initializes first sublayer of first layer
+!fs(0) = 0d0         ! initializes ad-hoc function at zero at bottom surface
+!DO il=1,nlayr       ! for each sub-layer
+!  thickl = rprop(1,il)           !sub-layer thickness
+!  thicks= thicks+ thickl         !update layer thickness
+!  IF( il < nlayr)THEN            ! but the last sub layer
+!     g1 = gv(il)                   !get shear modulus of present layer
+!     g2 = gv(il+1)                 !get shear modulus of next layer
+!  ELSE                           ! last layer
+!     g1 = gv(i0)                   !use previous values
+!     g2 = gv(il)
+!  END IF
+!  ! distinguish when a layer change occur
+!  IF( ABS(g1/g2 -1d0) > 1e-12  .OR. il == nlayr)THEN   ! if the end of the layers found
+!    f1 = 1d0/((g1/g2)**2+1)         !factor for equations
+!    f2 = 1d0-f1
+!    IF(i0 == 1 )THEN           ! for first layer
+!      v1 = 0d0                   !
+!      v2 = g1*f1+g2*f2           !
+!      v3 = g1                    !
+!    ELSE IF(il == nlayr )THEN  ! for the last layer
+!      v1 = vo
+!      v2 = 0d0
+!      v3 = g2
+!    ELSE                       ! inner layers
+!      v1 = vo
+!      v2 = g1*f1+g2*f2
+!      v3 = g1
+!     END IF
+!     vo = g1*f1+g2*f2
+!     xa = (-v1-v2+12*v3)/10d0           ! parameters of the quadratic approach
+!     xb = (v2-v1)/thicks                !
+!     xc = 12*(v1+v2-2*v3)/5/thicks**2   !
+!     zk = -thicks/2d0                   ! initializes local coordinate
+!     DO i=i0,il                      ! for each sublayer of the real layer
+!       zk = zk+ rprop(1,i)              !update z coordinate
+!       fs(i) = xa+xb*zk+xc*zk**2        ! ad-hoc function
+!     END DO
+!     i0 = il+1                          !initializes first sublayer of real layer
+!     thicks = 0d0                       !initializes layer thickness
+!  END IF
+!END DO
+!!ad-hoc *end*
+ de = 0d0 !initializes
+ IF( inter == 0 )THEN  !RZT
+   zl = -thick/2d0
+   gi = thick/gi
+   phi(0) = 0d0
+   DO il=1,nlayr                           !for each layer
+     imat= sec%iprop(5+il)                   !material index
+     mat => pmats(imat)%p                    !point to material
+     ! celoc(1:4) in plane values  celoc(5:6) shear values
+     !IF( ntype == 1 )THEN
+       CALL elastiff(celoc,mat,6)     !get elastic stiffnes matrix 6= 1D + transverse shear
+     !ELSE
+     !  CALL elastiff(celoc,mat,4)     !get elastic stiffnes matrix 4=plain stress + transverse shear
+     !END IF
+     ce(1:4) = celoc((/1,2,3,5/))                !
+     thickl = rprop(1,il)                        !layer thickness
+     g1 = thickl*thickl/12d0                     !auxiliar h^2/12
+     zl = zl+thickl/2d0                          !update Z position to layer mid-point z_k-bar
+     rprop(2,il) = zl                            !keep
+     beta(il) = gi/ce(4) - 1d0
+     phi(il) = phi(il-1) + beta(il)*thickl
+     fi = (phi(il) + phi(il-1))/2d0          !phi_k-bar 1
+     be = beta(il)                                 !
+     ! may be not integrated correctly
+     im(1) = im(1) + thickl*mat%prope(5)*(fi**2+(beta(il)*thickl)**2/12d0)   !additional rotatory inertia
+     ce = ce*thickl                              !scale layer stiffness matrix
+     !standard part
+     de( 1) = de( 1) + ce(1)                       !6 membrane part
+     de( 2) = de( 2) + ce(1)*(zl*zl+g1)            !7 bending part
+     de( 3) = de( 3) + ce(1)*zl                    !8 coupled part
+     de( 4) = de( 4) + ce(4)                       !9 shear part
+     !Dp(3,3)  phi^T Dk phi                        !10
+     f11 = fi*fi+be**2*g1                    !
+     de(5) = de(5) + ce(1)*f11
+     !Dp(2,3)     z Dk Phi                         !11
+     f11 = fi*zl+be*g1                       !
+     de(6) = de(6) + ce(1)*f11
+     ! Dp(1,3)       Dk Phi                        !12
+     de(7) = de(7) + ce(1)*fi
+     ! Dt(2,2)                                     !13
+     f11 = be*be
+     de(8) = de(8) + ce(4)*f11
+     ! Dt(1,2)                                     !14
+     de(9) = de(9) + ce(4)*be                      !
+     !
+     SELECT CASE (il)                              !depending on the layer
+     CASE ( 2)                                     !soft core
+       de(14) = ce(1)*8d0/15d0                     !E p2 x p2
+       de(15) = ce(1)*fi*2d0/3d0                   !E p2 x Phi
+       de(16) = ce(1)*zl*2d0/3d0                   !E p2 x z
+       de(17) = ce(1)*2d0/3d0                      !E p2
+       ! numerical integration of terms related to p3 x hip
+       ii = 50                                     !Number of sublayers for numerical integration
+       v1 =  4d0/thickl**2                         !p2 factor
+       v2 = 3d0*SQRT(3D0)/thickl                            !v1*v2 = p3 factor
+       g2 = -zl**2+1d0/v1                          !- bar-z^2 + h^2/4
+       xb = zl+thickl/2d0                          ! z2
+       v3 = ccoef+(1d0-1d0/SQRT(3d0))/2d0          ! c + (1-1/SQRT(3))/2
+       vo = thickl/ii                              ! z increment
+       z = zl-thickl/2-vo/2d0                      ! initializes z
+       fi = phi(il-1)-be*vo/2d0                    ! initializes phi
+       xa = v1*v2                                  ! p3 factor
+       DO i=1,ii                     ! loop for numerical integration in ii steps
+         z = z + vo                                !update z position
+         fi = fi+be*vo                             !update phi function
+         p2 = v1*(-z**2+2d0*z*zl+g2)               !p2
+         dp2 = v1*(-z+zl)*2d0                      !p2 derivative
+         p3 = v2*z*p2                              !p3
+         hip = v3/(ccoef+(xb-z)/thickl)            !hyperbolic function
+         p3h = p3*hip                              !p3 x hyp
+         dp3h = hip*(xa*(-3d0*z**2+4d0*z*zl+g2)+p3h/v3/thickl) !p3h derivative
+         de(18) = de(18) + p3h*p3h                 !E p3h x p3h
+         de(19) = de(19) + p2 *p3h                 !E p2  x p3h
+         de(20) = de(20) + fi *p3h                 !E phi x p3h
+         de(21) = de(21) + z  *p3h                 !E z   x p3h
+         de(22) = de(22) +     p3h                 !E       p3h
+         de(27) = de(27) + dp3h*dp3h               !G dp3h x dp3h
+         de(28) = de(28) + dp2 *dp3h               !G dp2  x dp3h
+         de(29) = de(29) + be  *dp3h               !G dphi x dp3h
+         de(30) = de(30) +      dp3h               !G        dp3h
+       END DO
+       de(18:22) = de(18:22)*ce(1)/ii              !correct
+       de(26) = ce(4)*16d0/(3d0*thickl**2)         !G dp2 x dp2
+       de(27:30) = de(27:30)*ce(4)/ii              !correct
+     CASE ( 3)
+       ce(1:4) = ce(1:4)*damfc
+       de(10) = ce(1)/3d0                                   !E D x D
+       de(11) = ce(1)*(phi(il) + phi(il-1)/2d0)/3d0         !E D x phi
+       de(12) = ce(1)*(zl/2d0 + thickl/12d0)                !E D x z
+       de(13) = ce(1)/2d0                                   !E D
+       de(23) = ce(4)/thickl**2                             !G dD x dD
+       de(24) = ce(4)*be/thickl                             !G dD x dPhi
+       de(25) = ce(4)/thickl                                !G dD x dz
+     CASE  ( 4)
+       de(10) = de(10) + ce(1)                                       !E D x D
+       de(11) = de(11) + ce(1)*fi                                    !E D x phi
+       de(12) = de(12) + ce(1)*zl                                    !E D x z
+       de(13) = de(13) + ce(1)                                       !E D
+     END SELECT
+     zl = zl+thickl/2d0                          !update Z position to layer interface
+   END DO
+! 0.38193746E+08 -0.18406220E+06                 -0.20440681E+05                  0.87600730E+07  0.15573333E+06  0.93236897E+04
+!                 0.30958235E+04                  0.32978790E+03                  0.78884384E+05 -0.77866667E+00  0.78401388E+02
+!                                 0.15277498E+08                 -0.15131523E+08                                                  0.58400000E+07  0.0
+!                                                 0.50729038E+02                  0.87236696E+04 -0.64793829E+00  0.19507913E+02                                   0.95168103E+05
+!                                                                 0.15131523E+08                                                  0.14551390E+07  0.0
+!                                                                                 0.87600487E+07  0.0             0.0                                              0.23712811E+05
+!                                                                                                 0.12458667E+06  0.42856600E+04
+!                                                                                                                 0.19208681E+04
+!                                                                                                                                 0.58400000E+12  0.0              0.0
+!                                                                                                                                                 0.19466667E+10   0.91762214E+08
+!                                                                                                                                                                  0.37296707E+09
+ ELSE                   !RZT3
+   ! Compute equation systems to compute RZT3 Additional functions
+   as = 0d0                                                  !initializes
+   ! fixed values
+   as(1,3) = 1d0 ; as(2,3) = 1d0                             !
+   as(3,4) = 1d0 ; as(3,nlayr+3) = as(3,nlayr+3) -1d0
+   as(4,4) =-1d0 ; as(4,nlayr+3) = as(4,nlayr+3) -1d0
+   as(1,1) = -thick**2/4d0 ; as(1,2) = thick**3/8d0
+   as(2,1) = -thick**2/4d0 ; as(2,2) =-thick**3/8d0
+   as(3,1) = 2d0*thick     ; as(4,2) = 1.5d0*thick**2
+   as(2,4) = rprop(1,1)  !h1
+   ! inter-layer conditions
+   zk = thick/2d0             !top surface
+   DO il=nlayr-1,1,-1            !from upmost interface to lowmost interface
+     thickl = rprop(1,il+1)                 !layer thickness upper
+     zk = zk-thickl                            ! interface z coordinate
+     as(2,il+4) = thickl                       ! hk
+     g1 = gv(il) ; g2 = gv(il+1)               ! shear modulus of adjacent layers to the interface
+     IF( ABS(g1/g2 -1d0) > 1e-12 )THEN           ! if shear modulus are different (standard)
+       as(4+il,1) = 2d0*zk
+       as(4+il,2) = 3d0*zk**2
+       f1 = 1d0/(g2/g1-1d0)
+       f2 = 1d0/(g1/g2-1d0)
+       as(il+4,il+3) = f1
+       as(il+4,il+4) = f2
+       gv(il+4) = 1d0                            ! rhs vector
+     ELSE                                       ! if same shear modulus (may be sub-layers)
+       as(il+4,il+3) = 1d0
+       as(il+4,il+4) =-1d0
+       gv(il+4) = 0d0                            ! rhs vector
+    END IF
+   END DO
+   gv(1:3) = 0d0                                 ! rhs vector
+   gv(4) = 2d0                                   ! rhs vector
+   !WRITE(58,"(7f12.8)")((as(k,il),il=1,6),gv(k),k=1,6)
+   CALL solsys(as,gv(:),nlayr+3,.TRUE.)                 ! solve system
+   !WRITE(58,"(1f15.8)")gv
+   DEALLOCATE( as )
+
+   za = za/den - thick/2d0  !SCFV neutral surface position (from mid surface)
+
+   phi(-2:0) = gv(1:3)
+   beta(1:nlayr) = gv(4:nlayr+3)
+   DEALLOCATE( fs,gv)
+   DO il=1,nlayr
+     thickl = rprop(1,il)                 !layer thickness upper
+     phi(il) = phi(il-1)+beta(il)*thickl
+   END DO
+   w0 = phi(-1)
+   x0 = phi(-2)
+   ga = 0d0 ; ia = 0d0 ; da = 0d0 ; ra = 0d0  !SCFV initializes arrays
+   ! compute elastic integrated matrix
+   de = 0d0                                   !initializes through the thickness integrated matrix
+   zl = -thick/2d0             !initializes Z position at bottom surface
+   DO il=1,nlayr                           !for each layer
+     imat= sec%iprop(5+il)                   !material index
+     mat => pmats(imat)%p                    !point to material
+     ! celoc(1:4) in plane values  celoc(5:6) shear values
+     !IF( ntype == 1 )THEN
+       CALL elastiff(celoc,mat,6)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+     !ELSE
+     !  CALL elastiff(celoc,mat,4)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+     !END IF
+     ce(1:4) = celoc((/1,2,3,5/))                !
+     thickl = rprop(1,il)                        !layer thickness
+     g1 = thickl*thickl/12d0                     !auxiliar h^2/12
+     zl = zl+thickl/2d0                          !update Z position to layer mid-point z_k-bar
+     rprop(2,il) = zl                            !keep
+     f1 = (phi(il) + phi(il-1))/2d0          !phi_k-bar 1
+     f2 = beta(il)*zl                        !beta*zk
+     im(0) = im(0) + thickl*mat%prope(5)*(zl**2+g1)              !rotatory inertia
+     im(1) = im(1) + thickl*mat%prope(5)*( (zl**6+15*zl**4*g1+27*zl**2*g1**2+27/7*g1**3)*w0*w0    &    !additional rotatory inertia
+                                         + (zl**5+10*zl**3*g1+9*zl*g1**2)*2*w0*x0                 &
+                                         + (zl**4+6*zl**2*g1+9/5*g1**2)*x0*x0                     &
+                                         - (f1*zl*(zl**2+3*g1)+3*beta(il)*g1*(zl**2+3*g1/5))*w0*2 &
+                                         - (f1*(zl**2+g1)+2*f2*g1)*x0*2                           &
+                                         + f1**2+beta(il)**2*g1)
+     ce = ce*thickl                              !scale layer stiffness matrix
+     !SCF for shear correction factors in 3 sublayers
+     den = thickl/ce(4)*thickl/3d0      !SCFV h/3 / G13
+       zk = zl - thickl/3d0             !SCFV mid point of first "sublayer"
+       ga = ga - ce(1)/3d0*(zk-za)      !SCFV g_alpha(z)
+       ia = ia + ga**2*den              !SCFV
+       zk = zk + thickl/3d0             !SCFV
+       ga = ga - ce(1)/3d0*(zk-za)      !SCFV g_alpha(z)
+       ia = ia + ga**2*den              !SCFV
+       zk = zk + thickl/3d0             !SCFV
+       ga = ga - ce(1)/3d0*(zk-za)      !SCFV g_alpha(z)
+       ia = ia + ga**2*den              !SCFV
+     da = da + ce(4)                    !SCFV  => Dt so it is unnecessary
+     ra = ra + ce(1)*((zl-za)**2 + g1)  !SCFV g1= thickl*thickl/12d0
+     !
+     !  components of the integrated stiffness matrix
+     !             1  2     7
+     !                3     6
+     !                   4      9
+     !                          8
+     !standard part
+     de( 1) = de( 1) + ce(1)               !membrane part
+     de( 2) = de( 2) + ce(1)*(zl*zl+g1)    !bending part
+     de( 3) = de( 3) + ce(1)*zl            !coupled part (Sign changed)
+     de( 4) = de( 4) + ce(4)               !shear part
+     ! Dp(1,1)  phi^T Dk phi               !10
+     f11 =   (zl**6+15*zl**4*g1+27*zl**2*g1**2+27/7*g1**3)*w0*w0    &
+           + (zl**5+10*zl**3*g1+9*zl*g1**2)*2*w0*x0                 &
+           + (zl**4+6*zl**2*g1+9/5*g1**2)*x0*x0                     &
+           - (f1*zl*(zl**2+3*g1)+3*beta(il)*g1*(zl**2+3*g1/5))*w0*2 &
+           - (f1*(zl**2+g1)+2*f2*g1)*x0*2                           &
+           + f1**2+beta(il)**2*g1
+     de(5) = de(5) + ce(1)*f11
+     ! Dp(3,3)                                     !11
+     f11 = - (zl**2+g1)*x0 - (zl**3+3*zl*g1)*w0  + f1
+     de(7) = de(7) + ce(1)*f11
+     !Dp(2,3)                                      !12
+     f11 = - (zl**3+3*zl*g1)*x0 - (zl**4+6*zl**2*g1+9/20*g1**2)*w0  + f1*zl+beta(il)*g1
+     de(6) = de(6) + ce(1)*f11                  !(Sign changed)
+     ! Dt(1,1)                                     !8
+     f11 =   9*(zl**4+6*zl**2*g1+9/20*g1**2)*w0**2    &
+           + 12*(zl**3+3*zl*g1)*w0*x0                 &
+           + (zl**2+g1)*(4*x0**2-6*beta(il)*w0)       &
+           - 4*zl*x0*beta(il)                         &
+           + beta(il)**2
+     de(8) = de(8) + ce(4)*f11
+     ! Dt(1,2)                                     !9
+     f11 = - 2*zl*x0 - 3*(zl**2+g1)*w0 + beta(il)
+     de(9) = de(9) + ce(4)*f11
+     !
+     SELECT CASE (il)                              !depending on the layer
+     CASE ( 2)                                     !soft core
+       de(14) = de(14) + ce(1)*8d0/15d0            !E p2 x p2
+       de(16) = de(16) + ce(1)*zl*2d0/3d0          !E p2 x z
+       de(17) = de(17) + ce(1)*2d0/3d0             !E p2
+       ! numerical integration of terms related to p3 x hip
+       ii = 50                                     !Number of sublayers for numerical integration
+       v1 =  4d0/thickl**2                         !p2 factor
+       v2 = 3d0*SQRT(3D0)/thickl                            !v1*v2 = p3 factor
+       g2 = -zl**2+1d0/v1                          !- bar-z^2 + h^2/4
+       xb = zl+thickl/2d0                          ! z2
+       v3 = ccoef+(1d0-1d0/SQRT(3d0))/2d0          ! c + (1-1/SQRT(3))/2
+       vo = thickl/ii                              ! z increment
+       z = zl-thickl/2-vo/2d0                      ! initializes z
+       f1 = phi(il-1)-be*vo/2d0                    ! initializes phi
+       f11= beta(il)                               ! initializes beta
+       xa = v1*v2                                  ! p3 factor
+       DO i=1,ii                     ! loop for numerical integration in ii steps
+         z = z + vo                                !update z position
+         f1 = f1+be*vo                             !update phi function
+         fi = f1- x0*z**2-w0*z**3                  !update phi function
+         be = - 2*zl*x0 - 3*zl**2*w0 + f11         ! derivative
+         p2 = v1*(-z**2+2d0*z*zl+g2)               !p2
+         dp2 = v1*(-z+zl)*2d0                      !p2 derivative
+         p3 = v2*z*p2                              !p3
+         hip = v3/(ccoef+(xb-z)/thickl)            !hyperbolic function
+         p3h = p3*hip                              !p3 x hyp
+         dp3h = hip*(xa*(-3d0*z**2+4d0*z*zl+g2)+p3h/v3/thickl) !p3h derivative
+         de(15) = de(15) + p2 *fi                  !E p2 x Phi
+         de(18) = de(18) + p3h*p3h                 !E p3h x p3h
+         de(19) = de(19) + p2 *p3h                 !E p2  x p3h
+         de(20) = de(20) + fi *p3h                 !E phi x p3h
+         de(21) = de(21) + z  *p3h                 !E z   x p3h
+         de(22) = de(22) +     p3h                 !E       p3h
+         de(27) = de(27) + dp3h*dp3h               !G dp3h x dp3h
+         de(28) = de(28) + dp2 *dp3h               !G dp2  x dp3h
+         de(29) = de(29) + be  *dp3h               !G dphi x dp3h
+         de(30) = de(30) +      dp3h               !G        dp3h
+       END DO
+       de(15) = de(15)*ce(1)/ii                    !correct
+       de(18:22) = de(18:22)*ce(1)/ii              !correct
+       de(26) = ce(4)*16d0/(3d0*thickl**2)         !G dp2 x dp2
+       de(27:30) = de(27:30)*ce(4)/ii              !correct
+     CASE ( 3)
+       ce(1:4) = ce(1:4)*damfc
+       de(10) = de(10) + ce(1)/3d0                                   !E D x D
+       de(12) = de(12) + ce(1)*(zl/2d0 + thickl/12d0)                !E D x z
+       de(13) = de(13) + ce(1)/2d0                                   !E D
+       de(23) = de(23) + ce(4)/thickl**2                             !G dD x dD
+       de(25) = de(25) + ce(4)/thickl                                !G dD x dz
+       de(11) = de(11) + ce(1)*(phi(il) + phi(il-1)/2d0)/3d0         !E D x phi
+       be = beta(il) - 2d0*zl*x0 -3d0*zl**2*w0
+       de(24) = de(24) + ce(4)*be/thickl                             !G dD x dPhi
+     CASE  ( 4)
+       de(10) = de(10) + ce(1)                                       !E D x D
+       de(11) = de(11) + ce(1)*(- (zl**2+g1)*x0 - (zl**3+3*zl*g1)*w0  + f1 ) !E D x phi
+       de(12) = de(12) + ce(1)*zl                                    !E D x z
+       de(13) = de(13) + ce(1)                                       !E D
+     END SELECT
+     zl = zl+thickl/2d0                          !update Z position to layer interface
+   END DO
+   ! shear correction factors according to VLACHOUTSIS (better)
+   ga = ra**2/de(7)/ia
+   WRITE(lures,"('  FACTORS ',/,' R1: ',E15.5)")ra
+   WRITE(lures,"('  FACTORS ',/,' I1: ',E15.5)")Ia
+   WRITE(lures,"('  FACTORS ',/,' d1: ',E15.5)")de(7)
+   WRITE(lures,"(' VLACHOUTSIS SHEAR CORRECTION FACTORS ',/,' Kx: ',f12.7)")ga
+  !  end of computation of shear correction factors
+ END IF
+ !      For each layer (2 values)
+ !          1: layer thickness
+ !          3: layer z coordinate
+ sizer = sizer+(nlayr+3)                ! include zig-zag functions
+ sizer = sizer+nlayr                    ! include zig-zag functions derivatives
+ !sizer = sizer+(nlayr+1)                ! include ad-hoc functions
+ sec%iprop(1) = nlayr                   !keep number of layers
+ sec%iprop(2) = 0                       !set total number of internal variables
+ sec%iprop(3) = 0                       !initializes to elastic lamina
+
+ !IF( nvars > 0 )THEN      ! if internal variables exist
+ !  sec%iprop(3) = 1                     !set to plastic lamina
+ !END IF
+ sizer = sizer+nlayr*2                  !update size of real array
+ sec%secdef = (/ sizei,sizer, 0,0,0 /)  !size of arrays
+ ALLOCATE (sec%rprop(sizer) )           !get memory
+ sec%rprop = 0d0                        !initializes
+ sec%rprop(1) = thick                   !thickness
+ sec%rprop(2) = youn/thick              !mean young modulus
+ sec%rprop(3) = dens/thick              !mean density
+ sec%rprop(4) = width                   !keep width for beams
+ sec%rprop(5) = dens*width              !surface density
+ sec%rprop(36) = sf                     !keep shear factor
+ sec%rprop(37) = ccoef                  !C coefficient
+ sec%rprop(38) = damfc                  !Damage factor
+ IF( compute )THEN
+    CALL listen('SHREV4')  !read a line
+    stren = getrea('STRENG',0.D0,'!LAYER MAXIMUN SHEAR STRESS........')
+    frene = getrea('FRENER',0.D0,'!LAYER FRACTURE ENERGY PER UNIT A..')
+    sec%rprop(3) = getrea('MAXDAM',0.D0,'!Maximum Damage ...................') !maximum damage
+    zl = -thick/2d0
+    DO il=1,lcomp-1
+      thickl = rprop(1,il)                        !layer thickness
+      zl = zl + thickl
+    END DO
+    ! THE layer
+    thickl = rprop(1,lcomp)                   !layer thickness
+    zl = zl + thickl/2d0
+    imat= sec%iprop(5+lcomp)                   !material index
+    mat => pmats(imat)%p                    !point to material
+    IF( ntype == 1 )THEN
+      CALL elastiff(celoc,mat,6)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+    ELSE
+      CALL elastiff(celoc,mat,4)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+    END IF
+    g1 = +celoc(5)                                ! layer modulus
+    f1 = - 2*zl*x0 - 3*zl**2*w0 + beta(lcomp)     ! derivative
+    sec%rprop(39) = f1+1d0                        ! keep function derivative + 1
+    sec%rprop(40) = g1                            ! keep modulus
+    frene = frene/thickl                          ! fracture energy per unit volume
+    sec%rprop(41) = stren/g1                      ! maximumm elastic strain
+    sec%rprop(42) = 2d0*frene*g1/stren**2         ! constant A
+    IF( sec%rprop(42) < 2.d0 )THEN
+      WRITE(lures,"(10x,'WARNING Fracture energy may be to low,',/, &
+            &       10x,'Constant A increased from ',f10.4,' to 2')")sec%rprop(42)
+      sec%rprop(42) = 2d0
+    END IF
+ END IF
+ WRITE(58,"(' phi and Beta Values')")
+ zl = -thick/2d0                            !bottom
+ IF( inter == 1 ) WRITE(58,"('x0 =',e16.8,'W0 =',e16.8)")x0,w0
+ WRITE(58,"(2e16.8)")zl,phi(0)
+ DO il=1,nlayr
+   thickl = rprop(1,il)                        !layer thickness
+   zl = rprop(2,il)                            !update Z position to layer interface
+   WRITE(58,"(4e16.8)")zl+thickl/2d0,phi(il), zl,beta(il)
+ END DO
+ sec%rprop(6:35) = de(1:30)*width                    !keep integrated matrix
+ WRITE(58,"(' Integrated D matrices including RZT approach')")
+ WRITE(58,"(5e16.8)")sec%rprop(6:35)
+ sec%rprop(43:44) = im*width                         !keep integrated inertias
+ ! ESTOY INCLUYENDO LAS FUNCIONES PHI Y SUS DERIVADAS BETA
+ CALL vecasi (nlayr+3,phi(-2),sec%rprop(51))      !keep phi
+ k =  53+nlayr+1
+ CALL vecasi (nlayr,beta(1),sec%rprop(k))         !keep beta
+ k = k+nlayr
+ CALL vecasi (2*nlayr,rprop,sec%rprop(k))         !keep initial data
+ !k = k+2*nlayr
+ !CALL vecasi (nlayr+1,fs,sec%rprop(k))             !keep ad-hoc functions
+ zl = -thick/2d0                             !bottom
+ DO il=0,nlayr
+   IF( il < nlayr) zl = zl+rprop(1,il+1)     !update Z position to next layer interface
+ END DO
+ IF(inter == 1 )  sec%rprop(36)=  ga
+ DEALLOCATE (rprop,phi,beta)                 !release local memory
+ sec%secdef(3) =  5        !GENERAL orthotropic with COUPLING including delamination
+
+ ! Additional postprocess variables --------------------------------------------
+ sec%secdef(4) = 2  !2 variables
+ sec%secdef(5) = 4  !4 values
+
+ ALLOCATE(var1,var2)  ! new variables
+
+ var1%type = 0
+ var1%dim = 1
+ var1%name(:) = (/ 'Phi_Moment','H_Moment','2_moment ','3_moment ',' ',' ',' ' /)
+
+ var2%type = 0
+ var2%dim = 1
+ var2%name(:) = (/ 'Phi_Shear','H_Shear','2_Shear','3_Shear',' ',' ',' ' /)
+
+ sec%postp => var1   !keep pointer to first variable
+ var1%next => var2
+ NULLIFY (var2%next)
+
+ RETURN
+ END SUBROUTINE sc_shre4

@@ -1,0 +1,63 @@
+ SUBROUTINE gauss9c(ndime,nnode,ngaus,coord,istop,           &
+                    heade,gauss,posgp,weigh,shape,deriv)
+ !********************************************************************
+ !
+ !*** evaluates gauss points constants for shell/beam element
+ !
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(IN) :: ndime,nnode,ngaus
+ INTEGER (kind=4), INTENT(OUT) :: istop
+ REAL (kind=8), INTENT(IN) :: coord(:,:)    !initial coordinates
+ TYPE (ele09), POINTER :: heade   !pointer to first element in the set
+ LOGICAL, INTENT (IN OUT) :: gauss    !TRUE if initial constant exists
+ REAL (kind=8), INTENT(OUT) :: posgp(:),   & !Gauss points positions
+                               weigh(:),   & !Gauss points weighs
+                               shape(:,:), & !shape functions at Gauss points
+                               deriv(:,:)    !shape functions derivatives at Gauss points
+
+ INTEGER (kind=4) g
+ REAL    (kind=8) x(ndime,nnode),xi,angle
+ TYPE (ele09), POINTER :: e
+
+
+ !       gauss points in local coordinates and weigths
+
+ xi = -1d0
+ DO g=1,ngaus
+   posgp(g) = (xi+1)/2d0
+   shape(1,g) =  2*xi**3-3*xi**2+1
+   shape(2,g) = -2*xi**3+3*xi**2
+   deriv(1,g) =  xi**3-2*xi**2+xi
+   deriv(2,g) =  xi**3-xi**2
+   weigh(g) = 1d0/ngaus
+   xi = xi + 2d0/(ngaus-1)
+ END DO
+ IF( .NOT.gauss )THEN
+ e => heade       !point to first element
+ DO               !loop over the elements in the set
+   IF (.NOT.ASSOCIATED (e) ) EXIT  !if all element processed, exit
+   ! gathers the initial coordinates
+   x  = coord(:,e%lnods)
+   xi = SQRT((x(1,2)-x(1,1))**2+(x(2,2)-x(2,1))**2)
+   IF( xi == 0) THEN
+      WRITE(lures,"(' null Length at classic beam element ',i5)") e%numel
+      istop = 1
+   ELSE
+     IF( (x(1,2) /= x(1,1) ) )THEN
+       angle = ATAN((x(2,2) - x(2,1))/(x(1,2)-x(1,1)))
+     ELSE
+       angle = ASIN((x(2,2) - x(2,1))/xi)
+     END IF
+   END IF
+   e%jac(1) = xi    !element length
+   e%jac(2) = angle !angle with X1 axis
+   e%stra0 = 0d0    !initializes stresses
+   e => e%next
+ END DO
+ gauss = .TRUE.
+ END IF
+
+ RETURN
+ END SUBROUTINE gauss9c

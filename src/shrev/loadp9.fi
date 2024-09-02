@@ -1,0 +1,138 @@
+ SUBROUTINE loadp9(ntype,nelem,loadf,gvect,gravy,nnode,ngaus,  &
+                   heade,shape,weigh,posgp)
+ !********************************************************************
+ !
+ !***  evaluates gravity and line loads for beam/shell elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ INTEGER (kind=4) :: nelem,nnode,ngaus,ntype
+ REAL (kind=8) loadf(:,:),gvect(3),gravy,shape(:,:),weigh(:),posgp(:)
+ TYPE(ele09), POINTER :: heade
+
+ !        local variables
+ INTEGER (kind=4) ielem,g,j,l,n,isec,osec,secty
+ REAL (kind=8) weigt,auxvl,dvolu,a(nnode,nnode),b(3,2),lg,ang,ea,ei,alpha,h,   &
+               p1,p2,q1,q2,v1a,v2a,v3a,v4a,v5a,v6a,v1n,v2n,v3n,v4n,v5n,        &
+               v1m,v2m,v3m,v4m,v5m,v1q,v2q,v3q,v4q,xi,x2,x3,x4,x5,n0,m0
+
+ REAL (kind=8),PARAMETER ::twopi=6.283185307179586d0
+ TYPE(ele09), POINTER :: e
+ TYPE(section), POINTER :: sec
+
+ e => heade
+ osec = -1
+ DO ielem = 1,nelem
+   isec  = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     secty = sec%secty
+     IF( secty == 43 )THEN
+       IF(ntype == 1 .OR. ntype == 4)THEN
+         weigt = gravy*sec%mtbas%prope(5)*sec%rprop(4)
+         h = sec%rprop(1)
+         ea = sec%rprop(11)
+         ei = sec%rprop(12)
+         alpha = sec%mtbas%prope(6)
+       ELSE
+         weigt = gravy*sec%mtbas%prope(5)*sec%rprop(1)
+       END IF
+     ELSE
+       weigt = gravy*sec%rprop(5)
+     END IF
+     osec  = isec
+   END IF
+
+   IF( ntype /= 4 )THEN
+
+     a(1:nnode,1) = 0d0
+
+     DO g = 1,ngaus
+       dvolu = weigh(g)*e%jac(g)
+       IF(ntype == 3) dvolu = dvolu*e%r0(g)*twopi
+       DO n = 1,nnode
+         a(n,1) = a(n,1) + shape(n,g)*dvolu
+       END DO
+     END DO
+
+     DO n = 1,nnode
+       l = e%lnods(n)
+       auxvl = weigt*a(n,1)
+       DO j = 1,2 !ndime
+         loadf(j,l) = loadf(j,l) + auxvl*gvect(j)
+       END DO
+     END DO
+   ELSE  ! c-beam
+     ! compute Homogeneus solutions
+     lg  = e%jac(1)
+     ang = e%jac(2)
+     ! local system
+     a(:,1) = (/ COS(ang), SIN(ang) /) !t
+     a(:,2) = (/ -a(2,1) ,  a(1,1)  /) !n
+     ! gravity load
+     p1 = DOT_PRODUCT( a(:,1),gvect(1:2) )*weigt   !axial proyection
+     p2 = p1                                       !axial proyection
+     ! distributed load (axial part)
+     p1 = p1+e%sede0(1)
+     p2 = p2+e%sedef(1)
+     ! load along the beam
+     v1a = lg/ea          !axial stiffness
+     v2a = (2*p1+p2)*lg/6 !(2p1+p2)l/6 = pl/2
+     v3a = -p1*lg/2       !-p1 l/2
+     v4a = -(p2-p1)*lg/6  !-(p2-p1) l/6
+     v5a = 2*v2a          !-p1 l
+     v6a = 3*v4a          !-(p2-p1) l/2
+     ! gravity load
+     q1 = DOT_PRODUCT( a(:,2),gvect(1:2) ) * weigt !normal proyection
+     q2 = q1                                       !q
+     ! distributed load (normal part)
+     q1 = q1+e%sede0(2)
+     q2 = q2+e%sedef(2)
+     v1n = lg**4/120/ei !l^4/120EI
+     v2n = q2-q1        !q2-q1
+     v3n = 5d0*q1       !5q1
+     v4n = -(7*q1+3*q2) !-(7q1+3q2)
+     v5n = 3*q1+2*q2    !(3q1+2q2)
+     v1m = lg**2/120    !l^2/120
+     v2m = 20*v2n       !20(q2-q1)   = 20 v2n
+     v3m = 12*v3n       !60q1        = 12 v3n
+     v4m =  6*v4n       !-6(7q1+3q2) =  6 v4n
+     v5m =  2*v5n       !2(3q1+2q2)  =  2 v5n
+     v1q =- lg/120      !-l/120
+     v2q =  3*v2m       !60(q2-q1)   =  3 v2m
+     v3q =  2*v3m       !120q1       =  2 v3m
+     v4q =    v4m       !-6(7q1+3q2) =    v4m
+     DO g=1,ngaus
+       xi = posgp(g)
+       x2 = xi**2
+       x3 = xi*x2
+       x4 = x2*x2
+       x5 = x2*x3
+       e%stra0(1,g) = v2a+v5a*xi                          !axial loads
+       e%stra0(2,g) = v1q*(v2q*x2+v3q*xi+v4q)             !shear
+       e%stra0(3,g) = v1m*(v2m*x3+v3m*x2+v4m*xi+v5m)      !moments
+!       e%stra0(4:5,g) = v1a*(v2a*xi+v3a*x2+v4a*x3)*a(:,1)  &
+!                      + v1n*(v2n*x5+v3n*x4+v4n*x3+v5n*x2) *a(:,2)  !displacements
+       e%stra0(4,g) = v1a*(v2a*xi+v3a*x2+v4a*x3)          !axial
+       e%stra0(5,g) = v1n*(v2n*x5+v3n*x4+v4n*x3+v5n*x2)   !normal
+     END DO
+     ! temperature changes
+     n0 = -ea*(e%sede0(3)+e%sedef(3))/2d0*alpha
+     m0 = -ei*(e%sedef(3)-e%sede0(3))/h  *alpha
+     e%stra0(1,1:ngaus) = e%stra0(1,1:ngaus) + n0         !axial loads
+     e%stra0(3,1:ngaus) = e%stra0(3,1:ngaus) + m0         !axial loads
+     b(1:2,1) = +e%stra0(1,1)    *a(:,1) + e%stra0(2,1)    *a(:,2)
+     b(3,1)   = +e%stra0(3,1)
+     b(1:2,2) = -e%stra0(1,ngaus)*a(:,1) - e%stra0(2,ngaus)*a(:,2)
+     b(3,2)   = -e%stra0(3,ngaus)
+     DO n = 1,nnode
+       l = e%lnods(n)
+       loadf(1:3,l) = loadf(1:3,l) + b(:,n)
+       !WRITE(55,"(f12.3)")b(:,n)
+     END DO
+   END IF
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE loadp9

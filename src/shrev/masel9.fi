@@ -1,0 +1,59 @@
+ SUBROUTINE masel9(ntype,nnode,nstre,ngaus,nreqs,nelem, &
+                   narch,ngrqs,sname,heade,zigzag)
+ IMPLICIT NONE
+ INTEGER (kind=4), INTENT(IN) :: ntype,nnode,nstre,ngaus,nreqs,nelem
+ INTEGER (kind=4), INTENT(IN OUT) :: narch
+ INTEGER (kind=4), POINTER :: ngrqs(:)
+ CHARACTER (len=*) :: sname
+ TYPE(ele09), POINTER :: heade
+ LOGICAL, INTENT(IN) :: zigzag
+
+ INTEGER (kind=4) ielem,nadd
+ TYPE(ele09), POINTER :: e
+
+ WRITE(17,ERR=9) 9,nelem,sname
+ IF( ntype == 4 .OR. zigzag )THEN
+   WRITE(17,ERR=9) nnode,nstre,ngaus,ntype
+   CALL openfi(nfile=59)
+ ELSE
+   nadd = 3
+   WRITE(17,ERR=9) nnode,nstre+nadd,ngaus,ntype
+ END IF
+ e => heade
+ DO ielem=1,nelem
+   WRITE(17,ERR=9) e%matno,e%lnods(1:nnode)
+   e => e%next
+ END DO
+
+ IF(nreqs > 0) THEN
+   CALL openfi(nfile=21,narch=narch)
+   IF( ntype == 4  )THEN
+     WRITE(narch,ERR=9) nreqs,nstre,ngrqs
+     WRITE(narch,ERR=9) 11,sname,'N    ','M    ','Q    '
+   ELSE IF( zigzag )THEN
+     SELECT CASE (ntype)
+     CASE(1)
+       SELECT CASE (nstre)
+       CASE(5)
+         WRITE(narch,ERR=9) 11,sname,'N_1  ','M_1  ','Q_1  ','M_f ','Q_f '
+       CASE(9)
+         WRITE(narch,ERR=9) 11,sname,'N_1  ','M_1  ','Q_1  ','M_f ','M_P','M_Q','Q_f ','Q_P ','Q_Q '
+       END SELECT   
+     CASE(2:3)
+       WRITE(narch,ERR=9) 11,sname,'N_1  ','N_2  ','M_1  ','M_2  ','Q_1  ','M_f  ','Q_f  '
+     END SELECT
+   ELSE
+     WRITE(narch,ERR=9) nreqs,nstre+nadd,ngrqs
+     SELECT CASE (ntype)
+     CASE(1)
+       WRITE(narch,ERR=9) 11,sname,'N_1  ','M_1  ','Q_1  ','EP_B ','EP_T ','Lambd'
+     CASE(2:3)
+       WRITE(narch,ERR=9) 11,sname,'N_1  ','N_2  ','M_1  ','M_2  ','Q_1  ', &
+             'EP_B ', 'EP_T ','Lambd'
+     END SELECT
+   END IF
+ END IF
+
+ RETURN
+ 9 CALL runen2('')
+ END SUBROUTINE masel9

@@ -1,0 +1,38 @@
+ SUBROUTINE kgmm20 (cd,s,stiff,ntype)
+ !
+ ! compute geometric stiffness
+ !
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER(kind=4), INTENT(IN) :: ntype      !problem type
+ REAL (kind=8), INTENT(IN) ::  cd(6,3),  & !cartesian derivatives of LST
+                               s(4)        !membrane forces * A * r
+ REAL (kind=8), INTENT(OUT) :: stiff(*)  !stiffness matrix
+ ! local variables
+ INTEGER (kind=4) i,j,k,l,n,pos          !different index
+ REAL (kind=8) :: value                 !diagonal value to add
+ INTEGER (kind=4) poesti
+ poesti(i,j) = (24-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+ l = 0           ! initializes DOF position I
+ DO i=1,6         !for each node
+   n = l         ! initializes DOF position J
+   DO j=i,6      ! for each node (upper part)
+     value = + s(1)*cd(i,1)*cd(j,1) + s(2)*cd(i,2)*cd(j,2) &
+             + s(3)*(cd(i,2)*cd(j,1)+cd(j,2)*cd(i,1))
+     DO k=1,2    ! for each DOF (diagonal only)
+       pos = poesti(l+k,n+k)   ! (I,J)
+       stiff(pos) = stiff(pos) + value
+     END DO
+     IF( ntype == 3 )THEN
+       value = s(4)*cd(i,3)*cd(j,3)
+       pos = poesti(l+1,n+1)   ! (I,J)
+       stiff(pos) = stiff(pos) + value
+     END IF
+     n = n + 2   ! increment DOF position J
+   END DO
+   l = l + 2     ! increment DOF position I
+ END DO
+
+ RETURN
+ END SUBROUTINE kgmm20

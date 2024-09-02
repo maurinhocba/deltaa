@@ -1,0 +1,44 @@
+ SUBROUTINE kgmm05q (cd,s,stiff)
+ !
+ ! compute geometric stiffness for PRISM - Quadratic
+ !
+ IMPLICIT NONE
+ ! dummy arguments
+ REAL (kind=8), INTENT(IN) ::  cd(:,:,:,:),   & !cartesian derivatives at faces
+                               s(:,:)           !integrated 2nd PK stresses (3,2)
+ REAL (kind=8), INTENT(OUT) :: stiff(:)  !stiffness matrix
+ ! local variables
+ INTEGER (kind=4) i,j,k,l,n,pos,nv2,ii,jj,fa,kk
+ REAL (kind=8) :: value,s11,s22,s12                  !diagonal value to add
+ INTEGER (kind=4) poesti
+ poesti(nv2,i,j) = (nv2-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+ nv2 = 6*12    !twice the number of DOFs
+ DO fa=1,2     !for each face
+   s11 = s(1,fa)/3d0 ; s22 = s(2,fa)/3d0 ; s12 = s(3,fa)/3d0  !face contribution
+   !s11 = s(1,fa) ; s22 = s(2,fa) ; s12 = s(3,fa)  !face contribution
+   kk = 9*(fa-1)   !first Face DOF position - 1  (0 or 9)
+   jj = 9          !position of extra node DOFs at the face
+   DO ii=1,3       !for each side
+     l = kk             ! initializes DOF position I
+     DO i=1,4           ! for each node
+       IF( i == 4 ) l = l + jj   !for extra node, Add JJ to I
+       n = l            ! initializes DOF position J
+       DO j=i,4      ! for each node (upper part)
+         value = + s11* cd(i,1,ii,fa)*cd(j,1,ii,fa) + s22*cd(i,2,ii,fa)*cd(j,2,ii,fa)  &
+                 + s12*(cd(i,2,ii,fa)*cd(j,1,ii,fa) +     cd(j,2,ii,fa)*cd(i,1,ii,fa))
+         DO k=1,3    ! for each DOF (diagonal only)
+           pos = poesti(nv2,k+l,k+n)   ! (I,J)
+           stiff(pos) = stiff(pos) + value
+         END DO
+         n = n + 3   ! increment DOF position J
+         IF( j == 3 ) n = n + jj  ! for extra node Add JJ DOF J
+       END DO
+       l = l + 3     ! increment DOF position I
+     END DO
+     jj = jj+3    ! position of extra node DOFs at the face
+   END DO
+ END DO
+
+ RETURN
+ END SUBROUTINE kgmm05q

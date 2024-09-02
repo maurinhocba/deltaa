@@ -1,0 +1,102 @@
+     SUBROUTINE modmat30(stiff,stifb,bcode,bounc,x,nab)
+     IMPLICIT NONE
+     INTEGER (kind=4), INTENT(IN) :: bcode
+     REAL(kind=8), INTENT(IN) :: stifb(171),x(3,12),nab(:,:)
+     REAL(kind=8), INTENT(OUT) :: stiff(666)
+     LOGICAL, INTENT(IN) :: bounc(6)
+
+     INTEGER(kind=4) :: i
+     REAL(kind=8) :: amod(36,18),p(3,3),ts(3),ln,tb(3)
+
+     IF( bcode == 0 )THEN
+       CALL proma30(stiff,stifb,areg) !,.TRUE.)
+     ELSE
+       IF( ANY(bounc)) THEN
+         amod = abou(:,:,bcode)
+         SELECT CASE (bcode)
+         CASE (1)
+           IF( bounc(1) .AND. bounc(5) ) CALL proym30(x,nab(:,1),amod,bcode,10,1,5,3) !if clamped or symmetry line at node
+           IF( bounc(1) .AND. bounc(6) ) CALL proym30(x,nab(:,2),amod,bcode,11,1,6,2) !if clamped or symmetry line at node
+         CASE (2)
+           IF( bounc(1) )THEN
+             IF( bounc(5)) CALL proym30(x,nab(:,1),amod,bcode,10,1,5,3)
+             IF( bounc(6)) CALL proym30(x,nab(:,1),amod,bcode,11,1,6,2)
+           END IF
+           IF( bounc(2)) THEN !if clamped or symmetry line
+             IF( bounc(6)) CALL proym30(x,nab(:,2),amod,bcode,7,2,4,3)
+             IF( bounc(4)) CALL proym30(x,nab(:,2),amod,bcode,12,2,6,1)
+           END IF
+         CASE (3)
+           IF( bounc(1) .AND. bounc(2)) CALL proym30(x,nab(:,1),amod,bcode, 6,1,2,3)  !if clamped or symmetry line at node
+         CASE (4)
+           IF( bounc(1) .AND. bounc(5)) CALL proym30(x,nab(:,1),amod,bcode,10,1,5,3)  !if clamped or symmetry line at node
+           IF( bounc(1) .AND. bounc(2)) CALL proym30(x,nab(:,2),amod,bcode, 6,1,2,3)  !if clamped or symmetry line at node
+         CASE (5)
+           IF( bounc(1) .AND. bounc(2)) CALL proym30(x,nab(:,1),amod,bcode, 6,1,2,3)  !if clamped or symmetry line at node
+           IF( bounc(2) .AND. bounc(4)) CALL proym30(x,nab(:,2),amod,bcode, 7,2,4,3)  !if clamped or symmetry line at node
+         CASE (6)
+           IF( bounc(3) .AND. bounc(1)) THEN !if clamped or symmetry line at node 1
+             CALL proym30(x,nab(:,1),amod,bcode, 5,1,3,2)
+             CALL proym30(x,nab(:,1),amod,bcode,10,1,1,2)
+           END IF
+           IF( bounc(1) .AND. bounc(2)) THEN !if clamped or symmetry line at node 1
+             CALL proym30(x,nab(:,2),amod,bcode, 6,1,2,3)
+             CALL proym30(x,nab(:,2),amod,bcode,11,1,1,3)
+           END IF
+         END SELECT
+         WRITE(58,"('bcode',i3)")bcode
+         WRITE(58,"(9f8.3)")(amod(i,10:18),i=1,36)
+         CALL proma30(stiff,stifb,amod)
+       ELSE
+         CALL proma30(stiff,stifb,abou(:,:,bcode))
+       END IF
+     END IF
+
+     END SUBROUTINE modmat30
+!--------------------------------------
+     SUBROUTINE proma30(s,s1,a,pr)
+     IMPLICIT NONE
+     REAL(kind=8), INTENT(OUT) :: s(666)    !36x36 matrix
+     REAL(kind=8), INTENT(IN) :: s1(171), & !18x18 matrix
+                                 a(36,18)   !A-matrix
+     LOGICAL, INTENT (IN), OPTIONAL :: pr
+
+     REAL(kind=8) :: s1a(18,36),          & ! S1 x tr(A)
+                     s2(17),s3(36)          ! rows
+     INTEGER(kind=4):: i,j,k,l,m,n
+
+     ! ------------ S1 x Tranpose(A)
+     l = 1        !first position in triangular matrix row
+     n = 18       !last position in triangular matrix row
+     DO i=1,18      !for each row
+       ! generate first part of the row equivalnet to upper part of column
+       k = i      !first position in row
+       DO m=1,i-1   !for each position in row (excluding diagonal)
+         s2(m) = s1(k)      !keep element
+         k = k+18-m        !update
+       END DO
+       IF(PRESENT(pr))WRITE(58,"(18e22.12)")s2(1:i-1),s1(l:n)                      !!!
+       DO j=1,36      !for each A column
+         s1a(i,j) = DOT_PRODUCT(s1(l:n),a(j,i:18)) + DOT_PRODUCT(s2(1:i-1),a(j,1:i-1))
+       END DO
+       l = n+1      !first position in triangular matrix
+       n = n+18-i   !last position in triangular matrix
+     END DO
+     ! ----------- A x (S1 TrA)
+     k = 1        !first position in triangular matrix
+     DO i=1,36      !for each row
+       l = i      !first position in row                           !!!
+       DO m=1,i-1   !for each position in row (excluding diagonal) !!!
+         s3(m) = s(l)      !keep element                           !!!
+         l = l+36-m        !update                                 !!!
+       END DO                                                      !!!
+       DO j=i,36      !for each column ( >= i )
+         s(k) = DOT_PRODUCT(a(i,:),s1a(:,j) )
+         s3(j) = s(k)                                              !!!
+         k = k+1  !next position in triangular matrix
+       END DO
+       IF(PRESENT(pr))WRITE(58,"(36e22.12)")s3(:)                                 !!!
+     END DO
+
+     RETURN
+     END SUBROUTINE proma30

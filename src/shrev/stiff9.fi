@@ -1,0 +1,122 @@
+ SUBROUTINE stiff9(nelem,nnode,ndofe,ngaus,nstre,axesc,ntype,shape,weigh,deriv,   &
+                  heade,coora,euler,gstif,force,zigzag,zigzpp,esecs)
+ !********************************************************************
+ !
+ !***   evaluation of tangent stiffness matrix for shell/beam elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ !***  routine parameters
+ INTEGER (kind=4), INTENT(IN) :: nelem,nnode,ndofe,ngaus,nstre,axesc,ntype,esecs(:)
+ REAL (kind=8), INTENT(IN) :: coora(:,:), euler(:,:), &
+                              weigh(:),deriv(:,:),shape(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:),force(:)
+ TYPE (ele09), POINTER :: heade
+ LOGICAL, INTENT(IN) :: zigzag,zigzpp
+ !***  local variables
+ TYPE (ele09), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL   plast,same
+
+ INTEGER (kind=4) ielem,nvarl,isec,msize,np,nd, &
+                  osec,matty,i,j,k,l,secty
+
+ REAL (kind=8) stiff(113),bmatx(ndofe,nnode,nstre), &
+               x(2,nnode),phig(nnode),props(50),aux(14)
+
+
+ nvarl = ndofe*nnode
+ msize = nvarl*(nvarl+1)/2  !max = 105 for nnode = 2 & 231 for nnode = 3
+ osec = -1
+ IF( ntype == 1 )THEN  !plane stress
+   nd = 11             !for SC_SHRE1 only
+   np = 14
+ ELSE IF( ntype == 2 .OR. ntype == 3 ) THEN  !plane strain & axilsymmetric
+   nd = 21                                   !for SC_SHRE1 only
+   np = 26
+ ELSE IF( ntype == 4 ) THEN         !linear Euler Bernoulli beam
+   nd = 11
+ END IF
+ !***   loop over all the elements
+ bmatx = 0d0
+ e => heade
+ DO ielem=1,nelem
+   isec  = e%matno
+   IF( isec /= osec )THEN
+     sec => psecs(isec)%p
+     matty = sec%secdef(3)
+     secty = sec%secty
+     l = MIN(SIZE(sec%rprop),50)
+     props(1:l) = sec%rprop(1:l)
+     IF( matty < 3 )THEN              !isotropic with plasticity
+       plast = sec%mtbas%matdef(3) > 1
+       !thick = props(3)
+     ELSE
+       plast = .FALSE.
+       IF(.NOT.zigzag.AND..NOT.zigzpp)props(12) = props(12)*props(24)  !shear correction factor
+       !thick = props(1)
+       nd = 6
+       np = 27    !¿?
+     END IF
+     IF( ntype == 4 ) plast = .FALSE.
+     osec  = isec
+   END IF
+   IF( ntype == 4 ) THEN          !linear Euler Bernoulli beam
+     CALL tanma9c(props(nd:),e%jac(1:),stiff(1))
+     j = 1
+     DO i=1,6
+       WRITE(55,"(6e15.5)")stiff(j:j+6-i)
+       j = j + 7 - i
+     END DO
+   ELSE
+     IF(zigzag )THEN             !non-linear FSDT ++
+       IF( ielem == 1 )THEN                        !first element (assumed ordered)
+         same = esecs(1) == esecs (2)              !when Section is continuous at right
+       ELSE IF( ielem == nelem )THEN               !last element (assumed ordered)
+         same = esecs(nelem-1) == isec             !when Section is continuous at left
+       ELSE                                        !inner element
+         same = esecs(ielem-1) == isec .AND. esecs(ielem+1) == isec  !when Section is continuous at both sides
+       END IF
+       np = 31  !pointer to additional values
+     ELSE
+       same = .TRUE.
+     END IF
+          !  gathers the actual coordinates and local coordinate transf.
+     x = coora(:,e%lnods)
+     phig  = euler(1,e%lnods)
+     !  zero the elemental stiffness matrix
+     stiff(1:msize) = 0d0
+     IF( same )THEN
+       CALL tanma9(nvarl,ndofe,nstre,ntype,plast,nnode,ngaus,axesc,    &
+                  weigh,shape,deriv,props(nd:),props(5:),props(np:),   &
+                  e%jac,e%r0,e%stra0,e%stres,e%sedef,e%strap,e%ehist,  &
+                  bmatx,x,phig,e%phil,stiff,matty,secty,zigzag,zigzpp)
+        !IF(ielem == 2)THEN
+        !WRITE(58,"('iel=',i3)")ielem
+        !WRITE(58,"(9e13.5)")stiff(1:36)
+        !END IF
+     ELSE  !mixed sections approach
+        CALL tanma9z(nvarl,axesc,e%auxil,e%jac,x,phig,e%phil,stiff)
+     END IF
+     !IF( ielem >=100 .AND. ielem <=101)THEN
+     !  WRITE(58,"('iel=',i3)")ielem
+     !  j = 1
+     !  DO i=1,14
+     !    k= j+14-i
+     !    aux(i:14) = stiff(j:k)
+     !    j = k+1
+     !    l = i
+     !    DO k=1,i-1
+     !      aux(k) = stiff(l)
+     !      l = l+14-k
+     !    END DO
+     !    WRITE(58,"(14e15.6)")aux
+     !  END DO
+     !END IF
+   END IF
+   ! assemble stiffness matrix and force vector
+   CALL stiaux(nnode,e%lnods(1),nvarl,ndofe,stiff(1),force(1),gstif(1) )
+   e => e%next
+ END DO
+ RETURN
+ END SUBROUTINE stiff9

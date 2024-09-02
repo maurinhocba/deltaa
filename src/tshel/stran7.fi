@@ -1,0 +1,127 @@
+ SUBROUTINE stran7(ansmm,nnass,cartd,shape,ap1,x,t,ji,omat,stran,dx,dt,tt,dxt,ts,dfi)
+ !***********************************************************************
+ !
+ !*****this routine computes 1st and 2nd fundamental forms and distorsions
+ !            for element 7 at Integration points
+ !***********************************************************************
+ IMPLICIT NONE
+ ! variables used of the MODULE
+ ! ngaus : number of in-plane Gauss Points
+ ! nasmm : number of membrane strains
+ ! ntan(nnode,nnass) : shape function derivatives at sampling points
+ ! nsha(nnode,nnass) : shape function at sampling points
+ ! dn(nnode,2,3) : shape function derivatives at vertex nodes
+ ! ntan2(nnode,nasmm) : shape function derivatives at mid-side points
+ INTEGER (kind=4), PARAMETER :: ndime=3
+ !              routine parameters
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: ansmm, &     !Natural Assumed Strain Membrane Model
+                                 nnass        !number of shear strains
+ REAL (kind=8), INTENT(IN) :: cartd(:,:,:), & !CARTesian Derivatives at Gauss poinnts
+                              x(:,:),       & !mid-surface coordinates at Nodal points
+                              t(:,:),       & !Director at Nodal points
+                              shape(:,:),   & !Shape Functions at Gauss Points
+                              ji(:,:,:),    & !Inverse Jacobian at Gauss Points
+                              ap1(:,:,:),   & !shear PA matrix at Gauss Points
+                              omat(:,:,:,:)   !membrane PA matrix at Gauss Points
+
+ REAL (kind=8), INTENT(OUT) :: stran(:,:),  & !first & second fundamental forms + shear distortions at Gauss points
+                               dx(:,:,:),   & !mid-surface derivatives at Gauss points
+                               dt(:,:,:),   & !director derivatives at Gauss points
+                               tt(:,:)        !director at Gauss points
+ ! for shear assumed strains
+ REAL (kind=8), INTENT(OUT) :: dxt(3,nnass), & !mid-surface natural side-derivatives at shear sampling points
+                               ts(3,nnass)     !director at shear sampling points
+ ! for membrane assumed strains
+ REAL (kind=8), INTENT(OUT) :: dfi(3,3,3)      !derivatives at assumed strain points
+
+ !              local variables
+
+ INTEGER (kind=4) :: i,g,j,k
+ REAL    (kind=8) :: beta(nasmm),gamma(nnass),cq(3),long,f(3,3)
+
+ INTERFACE
+   INCLUDE 'deriv6.h'
+   INCLUDE 'vecuni.h'
+ END INTERFACE
+
+ !     director field, mid-surface & director derivatives at gauss points
+ CALL deriv6(ngaus,shape,cartd,x,t,tt,dx,dt)
+
+ DO g = 1,ngaus
+   IF (ansmm == 0) THEN                         ! standard displacement formulation
+     !                                     evaluates 1st fundamental form
+     stran(1,g) = DOT_PRODUCT(dx(:,1,g),dx(:,1,g))
+     stran(2,g) = DOT_PRODUCT(dx(:,2,g),dx(:,2,g))
+     stran(3,g) = DOT_PRODUCT(dx(:,1,g),dx(:,2,g))
+   END IF
+   !                                      evaluates 2nd fundamental form
+   stran(4,g) = DOT_PRODUCT(dt(:,1,g),dx(:,1,g))
+   stran(5,g) = DOT_PRODUCT(dt(:,2,g),dx(:,2,g))
+   stran(6,g) = DOT_PRODUCT(dt(:,1,g),dx(:,2,g))       &
+               +DOT_PRODUCT(dt(:,2,g),dx(:,1,g))
+   !cq = 2d0*t(:,g+3)+t(:,g)+t(:,MOD(g,3)+1)     !director at mid-side point
+   !long = SQRT(DOT_PRODUCT(cq,cq))              !length
+   !cq = cq/long                                 !unit vector
+   IF( nnass == ngaus)THEN
+     stran(7,g) = DOT_PRODUCT(tt(:,g),dx(:,1,g))
+     stran(8,g) = DOT_PRODUCT(tt(:,g),dx(:,2,g))
+   END IF
+   !WRITE(58,"(6e16.6)")dt(:,:,g)
+   !WRITE(58,"(6e20.10)")cq,tt(:,g)
+   !WRITE(58,"(3e16.6)")stran(4:6,g)
+ END DO
+
+
+ !            evaluates 1st fundamental form at assumed strain points
+ IF(ansmm == 1) THEN                     ! Assumed membrane using vertex nodes
+   j = 1
+   DO i = 1,3
+     CALL proma1(dfi(1,1,i),x(1,1),dn(1,1,i),3,2,nnode) ! computes derivatives at assumed strain points
+     beta(j)   = DOT_PRODUCT(dfi(:,1,i),dfi(:,1,i))
+     beta(j+1) = DOT_PRODUCT(dfi(:,2,i),dfi(:,2,i))
+     beta(j+2) = DOT_PRODUCT(dfi(:,1,i),dfi(:,2,i))
+     j = j+3
+   END DO
+ END IF
+ IF(ansmm == 2) THEN                     ! Assumed membrane subtriangles mid-side points
+   i = 0
+   DO k=1,3
+     DO j=1,3
+       i = i+1
+       CALL proma1(dfi(1,j,k),x(1,1),ntan2(1,i),ndime,1,nnode) ! computes derivatives at assumed strain points
+       beta(i)  = DOT_PRODUCT(dfi(:,j,k),dfi(:,j,k))
+     END DO
+   END DO
+ END IF
+ !            evaluates shear distortions at assumed strain points
+ IF( nnass > ngaus )THEN
+   DO i=1,nnass
+     ts(:,i) = MATMUL(t,nsha(:,i))        !director at the sampling point
+     CALL vecuni(3,ts(:,i),long)          !unit vector
+     dxt(:,i) = MATMUL(x,ntan(:,i))
+     gamma(i) = DOT_PRODUCT(ts(:,i),dxt(:,i))
+   END DO
+ END IF
+ !WRITE(58,"(8e15.5)")gamma
+
+ DO g = 1,ngaus
+   IF( ansmm > 0 )THEN
+     ! interpolate to the Gauss Points
+     cq = MATMUL(omat(:,:,1,g),beta)               !(1/2,1/2, 0 ) (zeta,xita,eta)
+     ! transform to local Cartesian system
+     f = RESHAPE( (/ ji(1,1,g)**2,              ji(2,1,g)**2,      ji(1,1,g)*ji(2,1,g), &     !transformation matrix for a 2x2 tensor
+                     ji(1,2,g)**2,              ji(2,2,g)**2,      ji(1,2,g)*ji(2,2,g), &
+                 2d0*ji(1,1,g)*ji(1,2,g), 2d0*ji(2,1,g)*ji(2,2,g), ji(1,1,g)*ji(2,2,g)+ji(1,2,g)*ji(2,1,g) /),(/3,3/))
+     !transform FFF to local Cartesian system
+     stran(1:3,g) = MATMUL(f,cq)            !FFF cartesian at GP
+   END IF
+   IF( nnass > ngaus )THEN
+     cq(1:2) = MATMUL(ap1(:,:,g) ,gamma)        !interpolates assumed strain values to Gauss points
+     stran(7:8,g) = MATMUL(cq(1:2),TRANSPOSE(ji(:,:,g)))   !transform to cartesian
+     !WRITE(58,"(8e15.5)")gamma
+   END IF
+ END DO
+
+ RETURN
+ END SUBROUTINE stran7

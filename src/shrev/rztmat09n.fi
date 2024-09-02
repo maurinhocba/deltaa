@@ -1,0 +1,246 @@
+ SUBROUTINE rztmat09n(dmat,secp,sec,secn)
+ IMPLICIT NONE
+ ! dummy arguments
+ REAL(kind=8), INTENT(OUT) :: dmat(:)   !section stiffness
+ TYPE(section), POINTER :: sec,secp,secn
+ ! local variables
+ INTEGER(kind=4) :: nlayr,imat,il,ib,ie,ll,np
+ REAL(kind=8) :: zk,thickl,x0(2),w0(2),f1_1,f2_1,f1_2,f2_2,el,gl,f11,dp(10),dt(6),g1
+ TYPE (mater), POINTER :: mat
+ REAL(kind=8), ALLOCATABLE :: phi(:,:),beta(:,:)
+
+
+ ! Compute phi function at nodes
+ ll = sec%iprop(5)          !test layer (not used)
+ nlayr = sec%iprop(1)       !number of layers
+ ALLOCATE( phi(0:nlayr,2),beta(nlayr,2) )  !get memory for phi and beta at nodes
+ np = 34+2*nlayr  !pointer
+
+ IF( sec%secno /= secp%secno )THEN  !present and previous are different
+   CALL rzt3(nlayr,x0(1),w0(1),phi(:,1),beta(:,1),sec%iprop,secp%iprop,sec%rprop(1),sec%rprop(np:)) !compute phi for first node
+   !    rzt3(nlayr,x0,   w0,   phi,     beta,     iprop,        ipro1,         thick,   rprop)
+   dmat(17) = x0(1); dmat(18) = w0(1); dmat(19:19+nlayr) = phi(:,1); dmat(20+nlayr:) = beta(:,1)    !assign to dmat
+ ELSE                                                                                               !use from section data base
+   x0(1) = sec%rprop(31)
+   w0(1) = sec%rprop(32)
+   ib = 33
+   ie = ib+nlayr
+   phi(:,1) = sec%rprop(ib:ie)
+   ib= ie+1
+   ie= ib+nlayr-1
+   beta(:,1) = sec%rprop(ib:ie)
+ END IF
+
+ IF( sec%secno /= secn%secno )THEN  !present and next are different
+   CALL rzt3(nlayr,x0(2),w0(2),phi(:,2),beta(:,2),sec%iprop,secn%iprop,sec%rprop(1),sec%rprop(np:)) !compute phi for second node
+   !    rzt3(nlayr,x0,   w0,   phi,     beta,     iprop,        ipro1,         thick,   rprop)
+   dmat(17) = x0(2); dmat(18) = w0(2); dmat(19:19+nlayr) = phi(:,2); dmat(20+nlayr:) = beta(:,2)    !assign to dmat
+ ELSE                                                                                               !use from section data base
+   x0(2) = sec%rprop(31)
+   w0(2) = sec%rprop(32)
+   ib = 33
+   ie = ib+nlayr
+   phi(:,2) = sec%rprop(ib:ie)
+   ib= ie+1
+   ie= ib+nlayr-1
+   beta(:,2) = sec%rprop(ib:ie)
+ END IF
+
+ !  compute stiffness matrix
+ dp = 0d0            !initializes
+ dt = 0d0            !initializes
+ DO il=1,nlayr                           !for each layer
+   thickl = sec%rprop(ie+2*il-1)               !layer thickness
+   g1 = thickl*thickl/12d0                     !auxiliar h^2/12
+   zk = sec%rprop(ie+2*il)                     !update Z position to layer mid-point z_k-bar
+   !RZT + Cuad + Cubic
+   f1_1 = (phi(il,1) + phi(il-1,1))/2d0        !phi_k-bar 1
+   f2_1 = beta(il,1)*zk                        !beta1*zk
+   f1_2 = (phi(il,2) + phi(il-1,2))/2d0        !phi_k-bar 2
+   f2_2 = beta(il,2)*zk                        !beta2*zk
+   imat = sec%iprop(il+5)         !associated material (pointer)
+   mat => pmats(imat)%p           !point to material
+   SELECT CASE (mat%mtype)
+   CASE(1)   !isotropic
+     el = mat%prope(1)
+     gl = mat%prope(3)
+   CASE(5)   !orthotropic
+     el = mat%prope(7)
+     gl = mat%prope(13)       !RZT G13
+   END SELECT
+   el = el*thickl                              !scale layer stiffness matrix
+   gl = gl*thickl                              !scale layer stiffness matrix
+   !  components of the integrated stiffness matrix
+   !     1  2  3  4     1  2  3
+   !        5  6  7        4  5
+   !           8  9           6
+   !             10
+   !in-plane part
+   dp( 1) = dp( 1) + el               !membrane part
+   dp( 2) = dp( 2) + el*zk            !coupled membrane-bending part
+   dp( 5) = dp( 5) + el*(zk*zk+g1)    !bending part
+   dt( 1) = dt( 1) + gl               !shear part
+   ! Dp(1,1)  phi^T Dk phi
+   f11 =   (zk**6+15*zk**4*g1+27*zk**2*g1**2+27/7*g1**3)*w0(1)*w0(1)    &
+         + (zk**5+10*zk**3*g1+9*zk*g1**2)*2*w0(1)*x0(1)                 &
+         + (zk**4+6*zk**2*g1+9/5*g1**2)*x0(1)*x0(1)                     &
+         - (f1_1*zk*(zk**2+3*g1)+beta(il,1)*g1*(zk**2+3*g1/5))*w0(1)*2  &
+         - (f1_1*(zk**2+g1)+2*f2_1*g1)*x0(1)*2 + f1_1**2+beta(il,1)**2*g1
+   dp(8) = dp(8) + el*f11
+   f11 =   (zk**6+15*zk**4*g1+27*zk**2*g1**2+27/7*g1**3)*w0(2)*w0(2)    &
+         + (zk**5+10*zk**3*g1+9*zk*g1**2)*2*w0(2)*x0(2)                 &
+         + (zk**4+6*zk**2*g1+9/5*g1**2)*x0(2)*x0(2)                     &
+         - (f1_2*zk*(zk**2+3*g1)+beta(il,2)*g1*(zk**2+3*g1/5))*w0(2)*2  &
+         - (f1_2*(zk**2+g1)+2*f2_2*g1)*x0(2)*2 + f1_2**2+beta(il,2)**2*g1
+   dp(10) = dp(10) + el*f11
+   f11 =   (zk**6+15*zk**4*g1+27*zk**2*g1**2+27/7*g1**3)*w0(1)*w0(2)    &
+         + (zk**5+10*zk**3*g1+9*zk*g1**2)*(w0(1)*x0(2)+w0(2)*x0(1))     &
+         + (zk**4+6*zk**2*g1+9/5*g1**2)*x0(1)*x0(2)                     &
+         - (f1_1*zk*(zk**2+3*g1)+beta(il,1)*g1*(zk**2+3*g1/5))*w0(2)    &
+         - (f1_2*zk*(zk**2+3*g1)+beta(il,2)*g1*(zk**2+3*g1/5))*w0(1)    &
+         - (f1_1*(zk**2+g1)+2*f2_1*g1)*x0(2)                            &
+         - (f1_2*(zk**2+g1)+2*f2_2*g1)*x0(1)                            &
+         + f1_1*f1_2 +beta(il,1)*beta(il,2)*g1
+   dp(9) = dp(9) + el*f11
+   ! Dp(1,3)
+   f11 = - (zk**2+g1)*x0(1) - (zk**3+3*zk*g1)*w0(1)  + f1_1
+   dp(3) = dp(3) + el*f11
+   ! Dp(1,4)
+   f11 = - (zk**2+g1)*x0(2) - (zk**3+3*zk*g1)*w0(2)  + f1_2
+   dp(4) = dp(4) + el*f11
+   !Dp(2,3)
+   f11 = - (zk**3+3*zk*g1)*x0(1) - (zk**4+6*zk**2*g1+9/20*g1**2)*w0(1)  + f1_1*zk+beta(il,1)*g1
+   dp(6) = dp(6) + el*f11
+   !Dp(2,3)
+   f11 = - (zk**3+3*zk*g1)*x0(2) - (zk**4+6*zk**2*g1+9/20*g1**2)*w0(2)  + f1_2*zk+beta(il,2)*g1
+   dp(7) = dp(7) + el*f11
+   ! Dt(1,1)
+   f11 =   9*(zk**4+6*zk**2*g1+9/20*g1**2)*w0(1)**2     &
+         + 12*(zk**3+3*zk*g1)*w0(1)*x0(1)               &
+         + (zk**2+g1)*(4*x0(1)**2-6*beta(il,1)*w0(1))   &
+         - 4*zk*x0(1)*beta(il,1)                        &
+         + beta(il,1)**2
+   dt(4) = dt(4) + gl*f11 !; write(58,"(3e15.4)")dt(4),gl,f11
+   f11 =   9*(zk**4+6*zk**2*g1+9/20*g1**2)*w0(2)**2     &
+         + 12*(zk**3+3*zk*g1)*w0(2)*x0(2)               &
+         + (zk**2+g1)*(4*x0(2)**2-6*beta(il,2)*w0(2))   &
+         - 4*zk*x0(2)*beta(il,2)                        &
+         + beta(il,2)**2
+   dt(6) = dt(6) + gl*f11  !; write(58,"(3e15.4)")dt(6),gl,f11
+   f11 =   9*(zk**4+6*zk**2*g1+9/20*g1**2)*w0(1)*w0(2)  &
+         + 6*(zk**3+3*zk*g1)*(w0(1)*x0(2)+w0(2)*x0(1))  &
+         + (zk**2+g1)*(4*x0(1)*x0(2)                    &
+         - 3*(beta(il,1)*w0(2)+beta(il,2)*w0(1)))       &
+         - 2*zk*(x0(1)*beta(il,2)+x0(2)*beta(il,1))     &
+         + beta(il,1)*beta(il,2)
+   dt(5) = dt(5) + gl*f11
+   ! Dt(1,2)                                     !18
+   f11 = - 2*zk*x0(1) - 3*(zk**2+g1)*w0(1) + beta(il,1)
+   IF( il == ll ) dmat(17) = 1d0+f11
+   dt(2) = dt(2) + gl*f11
+   f11 = - 2*zk*x0(2) - 3*(zk**2+g1)*w0(2) + beta(il,2)
+   IF( il == ll ) dmat(18) = 1d0+f11
+   dt(3) = dt(3) + gl*f11
+ END DO
+ dp = dp*sec%rprop(4)  !width
+ dt = dt*sec%rprop(4)  !width
+ WRITE(58,"('phi 1',9e15.5)")x0(1),w0(1),phi(:,1)
+ WRITE(58,"('bet 1',9e15.5)")beta(:,1)
+ WRITE(58,"('phi 2',9e15.5)")x0(2),w0(2),phi(:,2)
+ WRITE(58,"('bet 2',9e15.5)")beta(:,2)
+ WRITE(58,"('Dp',10e15.5)")dp
+ WRITE(58,"('Dt',6e15.5)")dt
+   !  components of the integrated stiffness matrix
+   !   1   4      6
+   !       2      7
+   !          3      9
+   !   6   7      5
+   !          9      8
+ dmat(1:10)  = dp
+ dmat(11:16) = dt
+ DEALLOCATE(phi,beta)
+ !WRITE(58,"('p',9e15.5)")secp%rprop((/ 6,9,12,13,17,18,20,22,23 /))
+ !WRITE(58,"('e',9e15.5)")dmat
+ !WRITE(58,"('n',9e15.5)")secn%rprop((/ 6,9,12,13,17,18,20,22,23 /))
+ RETURN
+ END SUBROUTINE rztmat09n
+ !..........................................................
+ SUBROUTINE rzt3(nlayr,x0,w0,phi,beta,iprop,ipro1,thick,rprop)
+ IMPLICIT NONE
+ ! dummy arguments
+ ! The layers and z-coordinates must be coincident for both sections
+ INTEGER(kind=4), INTENT(IN) :: iprop(:),ipro1(:),nlayr !number of layers
+
+ REAL(kind=8), INTENT(IN) :: thick,    & !total thickness
+                             rprop(:)    !2,nlayr  thickness and z coordinate
+ ! The layers and z-coordinates must be coincident for both sections
+
+ REAL(kind=8), INTENT(OUT) :: x0,w0,phi(0:),beta(:)   !RZT3 function and derivative
+ ! local variables
+ INTEGER(kind=4) :: imat,il
+ REAL(kind=8) :: zk,thickl,g1,g2,f1,f2,bs(nlayr+3),as(nlayr+3,nlayr+3),gv(nlayr)
+ TYPE (mater), POINTER :: mat
+
+
+ DO il=1,nlayr              !loop
+   imat = iprop(il+5)             !associated material (pointer)
+   mat => pmats(imat)%p           !point to material
+   SELECT CASE (mat%mtype)
+   CASE(1)   !isotropic
+     gv(il) = mat%prope(3)
+   CASE(5)   !orthotropic
+     gv(il) = mat%prope(14)       !RZT G13
+   END SELECT
+   imat = ipro1(il+5)             !associated material (pointer)
+   mat => pmats(imat)%p           !point to material
+   SELECT CASE (mat%mtype)
+   CASE(1)   !isotropic
+     gv(il) = (gv(il) + mat%prope(3))/2d0
+   CASE(5)   !orthotropic
+     gv(il) = (gv(il) + mat%prope(14))/2d0       !RZT G13
+   END SELECT
+ END DO
+ ! Compute equation systems to compute RZT3 Additional functions
+ as = 0d0                                                  !initializes
+ ! fixed values
+ as(1,3) = 1d0 ; as(2,3) = 1d0                             !
+ as(3,4) = 1d0 ; as(3,nlayr+3) = as(3,nlayr+3) -1d0
+ as(4,4) =-1d0 ; as(4,nlayr+3) = as(4,nlayr+3) -1d0
+ as(1,1) = -thick**2/4d0 ; as(1,2) = thick**3/8d0
+ as(2,1) = -thick**2/4d0 ; as(2,2) =-thick**3/8d0
+ as(3,1) = 2d0*thick     ; as(4,2) = 1.5d0*thick**2
+ as(2,4) = rprop(1)      !
+ ! inter-layer conditions
+ zk = thick/2d0             !top surface
+ DO il=nlayr-1,1,-1            !from upmost interface to lowmost interface
+   thickl = rprop(2*il+1)                 !layer thickness upper
+   zk = zk-thickl                            ! interface z coordinate
+   as(2,il+4) = thickl                       ! hk
+   g1 = gv(il) ; g2 = gv(il+1)               ! shear modulus of adjacent layers to the interface
+   IF( ABS(g1/g2 -1d0) > 1e-12 )THEN           ! if shear modulus are different (standard)
+     as(4+il,1) = 2d0*zk
+     as(4+il,2) = 3d0*zk**2
+     f1 = 1d0/(g2/g1-1d0)
+     f2 = 1d0/(g1/g2-1d0)
+     as(il+4,il+3) = f1
+     as(il+4,il+4) = f2
+     bs(il+4) = 1d0                            ! rhs vector
+   ELSE                                       ! if same shear modulus (may be sub-layers)
+     as(il+4,il+3) = 1d0
+     as(il+4,il+4) =-1d0
+     bs(il+4) = 0d0                            ! rhs vector
+  END IF
+ END DO
+ bs(1:3) = 0d0                                 ! rhs vector
+ bs(4) = 2d0                                   ! rhs vector
+ CALL solsys(as,bs(:),nlayr+3,.TRUE.)          ! solve system
+ phi(0) = bs(3)
+ beta(1:nlayr) = bs(4:nlayr+3)
+ DO il=1,nlayr
+   thickl = rprop(2*il-1)                 !layer thickness upper
+   phi(il) = phi(il-1)+beta(il)*thickl
+ END DO
+ x0 = bs(1)
+ w0 = bs(2)
+ RETURN
+ END SUBROUTINE rzt3

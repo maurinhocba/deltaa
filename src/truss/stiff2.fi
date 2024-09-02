@@ -1,0 +1,36 @@
+ SUBROUTINE stiff2(ndime,nelem,heade,coora,gstif,       &
+                   force,emass,ttime)
+ !********************************************************************
+ !
+ !***   evaluation of tangent stiffness matrix for truss elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ !***  routine parameters
+ INTEGER (kind=4) ndime,nelem
+ REAL (kind=8) coora(:,:),ttime,gstif(:),force(:),emass(:,:)
+ TYPE (ele02), POINTER :: heade
+
+ !***  local variables
+ INTEGER (kind=4) ielem,nvarl,isec,nnod,l
+ REAL(kind=8) :: x(ndime,nnode),stiff(21)
+ TYPE (ele02), POINTER :: e
+
+ !***  loop over all the elements
+ e => heade
+ DO ielem=1,nelem
+   isec  = e%matno
+
+   !    gathers the actual coordinates
+   x = coora(:,e%lnods)
+   CALL tanma2(ndime,isec,e%gausv,x,stiff)
+   nnod = nnode
+
+   nvarl= nnod*ndime
+   CALL stiaux(nnod,e%lnods,nvarl,ndime,stiff(1),force(1),gstif(1) )
+
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE stiff2

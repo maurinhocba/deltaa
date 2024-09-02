@@ -1,0 +1,50 @@
+ SUBROUTINE cdac19(numel,x,cd,area,thick,angdf,angle,ntype,ver)
+ !-------------------------------------------------------------------
+ !--- actualizes derivatives in eulerian formulation for element 19
+ !--------------------------------------------------------------------
+ IMPLICIT NONE
+
+ !dummy variables
+ INTEGER (kind=4), INTENT(IN) :: numel        !element number
+ REAL(kind=8),INTENT (IN) :: x(2,6)           !present coordinates
+ REAL (kind=8), INTENT(OUT) :: cd(nnode,3,ngaus), &   !cartessian derivatives
+                               area(ngaus)    !element area
+ INTEGER (kind=4), INTENT(IN) :: ntype,ver        !problem type
+
+ REAL (kind=8), INTENT(IN) :: thick, &      !thickness for Plane Stress
+                              angdf, &      !default angle X_1 - Ort_1
+                              angle         !
+ !local variables
+ INTEGER (kind=4) i
+ REAL (kind=8) anglf,factor,r(ngaus)
+ REAL (kind=8), PARAMETER :: twopi=6.283185307209586
+
+ !     ---------------------------------------------------------
+   factor = twopi/360d0         !pi/180
+
+   IF( ntype == 3 )THEN
+     DO i=1,3    !compute original r at each mid side
+      r(i) = DOT_PRODUCT(x(1,:),shapef(:,i,ver))
+       IF( r(i) < 0d0 )THEN
+         WRITE(55,"('For axilsymmetric problems all X1 (r) coordinates' &
+                &   ' must be possitive ',/,                            &
+                &   ' ELEMENT ',i6,/,(2E15.6) )",err=9999) numel,x
+         CALL runen3('CDAC19: negative coord. r detected ')
+       END IF
+     END DO
+   END IF
+   ! compute element local systems, side proyections and element areas
+   anglf = ( angdf + angle )*factor
+   CALL axep19(x,cd,area,anglf,r,ntype,ver)
+
+   IF( ntype == 1 ) THEN  !plane stress
+     area= area*thick
+   ELSE IF( ntype == 3 )THEN ! include thickness or radius in the jacobian (element volume)
+     DO i=1,3    !compute original r at each mid side (Gauss Points)
+       area(i) = area(i)*r(i)*twopi
+     END DO
+   END IF
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE cdac19

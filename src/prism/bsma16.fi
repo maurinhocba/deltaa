@@ -1,0 +1,22 @@
+ SUBROUTINE bsma16 (nnode,nassp,gas,tas,nfdas,nfnda,bs)
+ ! compute Strain-displacement matrix for transverse shear
+ ! at assumed strain points for PRISM element 16 (6/15 nodes)
+ IMPLICIT NONE
+ INTEGER(kind=4), INTENT(IN) :: nnode,  & !number of nodes
+                                nassp     !number of sampling shear strain points
+ REAL (kind=8), INTENT(IN) :: tas(:,:),  & !(3,nassp) x,3
+                              gas(:,:),  & !(3,nassp) x,tan
+                              nfdas(:,:),& !(nnode,nassp) N,3
+                              nfnda(:,:)   !(nnode,nassp) N,tan
+ REAL (kind=8), INTENT(OUT) :: bs(:,:,:)   !(3,nnode,nassp) B matrix
+
+ INTEGER (kind=4) :: i,j
+
+ DO i=1,nassp  !for each assumed strain point
+   DO j=1,nnode  !for each node
+     bs(:,j,i) = gas(:,i)*nfdas(j,i) + tas(:,i)*nfnda(j,i)
+   END DO
+ END DO
+ RETURN
+
+ END SUBROUTINE bsma16

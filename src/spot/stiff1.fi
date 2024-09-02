@@ -1,0 +1,153 @@
+ SUBROUTINE stiff1(ndime,ndofn,nelem,heade,coora,euler,gstif,       &
+                   force,ttime)
+ !********************************************************************
+ !
+ !***   evaluation of tangent stiffness matrix for truss elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ !***  routine parameters
+ INTEGER (kind=4) ndime,ndofn,nelem
+ REAL (kind=8) coora(:,:),ttime,gstif(:),force(:),euler(:,:)
+ TYPE (ele01), POINTER :: heade
+
+ !***  local variables
+ LOGICAL same,newm
+ INTEGER (kind=4) ielem,nvarl,isec,i,n,j,k,nnod,n1,n2,tc,rc,ndofe,osec,m,nl,dir
+ REAL    (kind=8) x(ndime,2),stiff(78),stc,src,dx(ndime),lx, &
+                  s,lb(9,3),al(3),ang,facto
+ TYPE (ele01), POINTER :: e
+ TYPE (section), POINTER :: sec
+ INTEGER (kind=4) poesti
+ poesti(i,j,n) = (2*n-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+ !***  loop over all the elements
+ osec = -1    !initializes
+ e => heade   !point to first element
+ DO ielem=1,nelem       !loop over the element
+   isec  = e%matno      !section number
+   newm = isec /= osec  !compare with previous section
+   IF( newm ) THEN        !if a different sectin
+     sec => psecs(isec)%p               !search and point to
+     osec = isec                        !remember section number
+     tc  = sec%iprop(1)                 !curve for translational stiffnes
+     rc  = sec%iprop(2)                 !curve for rotational stiffnes
+     stc  = sec%rprop(1)                !translational stiffnes
+     src  = sec%rprop(2)                !rotational stiffnes
+     dir = sec%secdef(3)
+   END IF
+   !       gathers the actual coordinates
+   n1 = e%lnods(1)      !first node
+   n2 = e%lnods(2)      !second node
+   nnod = 2             !number of nodes
+   same = (n2 == 0)     !one-node fixed
+   IF( same ) nnod = 1  !
+   nl = 3+ndime         !pointer to Gauss array
+   ndofe = ndime        !number of DOFs per node
+   IF( e%rot ) ndofe = ndofn   !rotational stiffness
+   nvarl= nnod*ndofe           !number of Total DOFs
+   ! Coordinates and axial vector
+    x(:,1) = coora(:,n1)            !coordinates of first node
+   IF( same ) THEN
+     x(:,2) = e%gausv(2:ndime+1)    !recover original coordinates
+   ELSE
+     x(:,2) = coora(:,n2)           !coordinates of second node
+   END IF
+   dx = x(:,2) - x(:,1)           !distance vector
+   SELECT CASE (dir)
+   CASE( 1 )                  !X only
+     dx(2:3) = 0d0
+   CASE( 2 )                  !Y only
+     dx(1:3:2) = 0d0
+   CASE( 3 )                  !Z only
+     dx(1:2) = 0d0
+   CASE( 4 )                  !X-Y plane only
+     dx(3) = 0d0
+   CASE( 5 )                  !X-Z plane only
+     dx(2) = 0d0
+   CASE( 6 )                  !Y-Z plane only
+     dx(1) = 0d0
+   END SELECT
+   lx = SQRT(DOT_PRODUCT(dx,dx))  !length
+   IF( lx > 0 )dx = dx/lx         !unit vector
+   s = e%gausv(1)                 !
+
+   ! local system
+   IF( e%rot )THEN                !if rotational stiffness
+     IF( ndime == 3 )THEN           !3D problemms
+       lb(:,1) = euler(:,n1)          !present system at node 1
+       IF( same ) THEN
+         lb(:,2) = e%gausv(nl:nl+8)   !recover original system
+       ELSE
+         lb(:,2) = euler(:,n2)        !present system at node 2
+       END IF
+       CALL proma4(lb(1,3),lb(1,1),lb(1,2),3,3,3) ! l3 = l1^T * l2
+       CALL cuate8(lb(1,3),al(1))                 ! al = rotation vector
+       ang= SQRT(DOT_PRODUCT(al,al))              ! rotation angle
+     END IF
+   END IF
+   ! traslational stiffness
+   IF( lx > 0 )THEN               !if distance is positive
+     k = 0
+     facto = stc - s
+     DO n = 1,nnod
+       DO i = 1,ndime
+         DO m = n,nnod
+           IF(n == m) THEN
+             DO j = i,ndime
+               k = k+1
+               stiff(k) = dx(i)*dx(j)*facto
+               IF(i == j) stiff(k) = stiff(k) + s
+             END DO
+           ELSE
+             DO j = 1,ndime
+               k = k+1
+               stiff(k) = -dx(i)*dx(j)*facto
+               IF(i == j) stiff(k) = stiff(k) - s
+             END DO
+           END IF
+           k = k + ndofe - ndime
+         END DO
+       END DO
+     END DO
+   ELSE                           !original position
+     k = 1
+     DO n = 1,nnod
+       DO i = 1,ndime
+         DO m = n,nnod
+           IF(n == m) THEN
+             stiff(k) = stc
+           ELSE
+             stiff(k) = -stc
+           END IF
+           k = k + ndofe
+         END DO
+         k = k - i + 1
+       END DO
+       k = poesti(i+1,i+1,nvarl)
+     END DO
+   END IF
+   ! rotational stiffness
+   IF( e%rot)THEN
+     k = ndime+1
+     DO n = 1,nnod
+       DO i = ndime+1,ndofe
+         k = poesti(i,i,nvarl)
+         DO m = n,nnod
+           IF(n == m) THEN
+             stiff(k) = src
+           ELSE
+             stiff(k) = -src
+           END IF
+           k = k + ndofe
+         END DO
+       END DO
+     END DO
+   END IF
+   ! assemble stiffness matrix and force vector
+   CALL stiaux(nnod,e%lnods(1),nvarl,ndofe,stiff(1),force(1),gstif(1) )
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE stiff1

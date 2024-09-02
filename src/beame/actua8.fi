@@ -1,0 +1,29 @@
+ SUBROUTINE actua8(heade)
+ ! no plasticity for implicit analysis
+ IMPLICIT NONE
+ TYPE(ele08), POINTER :: heade
+
+ INTEGER (kind=4) :: isec,osec
+
+ TYPE(ele08), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL :: plast
+
+ osec = -1
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED(e) ) EXIT
+   isec = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     plast = sec%mtbas%matdef(3) > 1
+     osec = isec
+   END IF
+   IF( plast ) THEN   !Yield must be > zero
+     e%epdef(:) = e%epdef(:)
+   END IF
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE actua8

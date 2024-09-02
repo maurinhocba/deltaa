@@ -1,0 +1,80 @@
+ SUBROUTINE load27 (igrav,force,gvect,gravy,heade,bezier)
+ !********************************************************************
+ !
+ !***  evaluates gravity load vector for solid element 27
+ !***  solid-shell Bezier prism
+ !
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4) :: igrav
+ REAL (kind=8) :: force(:,:),gvect(3),gravy
+ TYPE (ele27), POINTER  :: heade
+ LOGICAL :: bezier
+
+ !        local variable
+ INTEGER(kind=4), PARAMETER :: ngaus = 2  !two points across the thickness are more than enough
+ REAL (kind=8) :: shape(nnode,ngaus,ngaup),aux(nnode,3), &
+                  posgp(ngaus),weigp(ngaus),sh(3,ngaus)
+ INTEGER (kind=4) i,k,n,l,isec,osec
+ REAL (kind=8) weigt,fvect(3,nnode),dens,dvol(3)
+ TYPE (ele27), POINTER :: elem
+ TYPE (section), POINTER :: sec
+ LOGICAL :: newm
+ INTERFACE
+   INCLUDE 'shape4.h'
+ END INTERFACE
+
+ IF(igrav /= 0) THEN       !if gravity is present
+
+   !       gauss points in local coordinate and weigths TTT
+   CALL gaussq (ngaus ,posgp ,weigp )
+   DO i=1,ngaus
+     sh(1,i) = (1d0+posgp(i)/gpzv(1))**2/4d0      !bottom
+     sh(2,i) = (1d0+posgp(i)/gpzv(2))**2/4d0      !top
+     sh(3,i) = (1d0-(posgp(i)/gpzv(2))**2)/2d0    !center
+     DO k=1,ngaup
+       CALL shape4(nnode,shape(1,i,k),aux(1,1),gpcoo(1,k),gpcoo(2,k),posgp(i),bezier,.FALSE.)
+     END DO
+   END DO
+
+   osec = -1
+   elem => heade           !point to first element
+   DO
+     IF (.NOT.ASSOCIATED (elem) ) EXIT    !all elements processed, Exit loop
+
+     isec  = elem%matno                     !associated material
+     newm = isec /= osec
+     IF ( newm )THEN
+       sec => psecs(isec)%p
+       IF( sec%mabas == -1 )THEN
+         dens = sec%rprop(3)
+       ELSE
+         dens = sec%mtbas%prope(5)
+       END IF
+       osec = isec
+       weigt = gravy*dens                     !density
+     END IF
+     IF(weigt /= 0.0d0) THEN                !if not zero
+       fvect = 0
+       DO k=1,ngaup
+         DO i=1,ngaus
+           dvol = (DOT_PRODUCT(elem%dvol(:,k),sh(:,i))*weigp(i)*weigt)*gvect
+           !force vector at each node
+           fvect(1,:) = fvect(1,:) +dvol(1)*shape(:,i,k)
+           fvect(2,:) = fvect(2,:) +dvol(2)*shape(:,i,k)
+           fvect(3,:) = fvect(3,:) +dvol(3)*shape(:,i,k)
+         END DO
+       END DO
+       DO n=1,nnode                                 !for each node (12)
+         l = elem%lnods(n)                        !node number
+         force(1:3,l) = force(1:3,l) + fvect(:,n) !sum on global force vector
+       END DO
+     END IF
+
+     elem => elem%next                       !point to next element
+   END DO
+ END IF
+
+ RETURN
+ END SUBROUTINE load27

@@ -1,0 +1,148 @@
+ SUBROUTINE kgeo03(nvarl,cartd,romtx,t,dx,sgtot,estif,quad,mems,tm,cd)
+ !******************************************************************************
+ !
+ !*****this routine compute the geometric part of the tangent stiffness
+ !                    for element TLLL
+ !
+ !******************************************************************************
+ IMPLICIT NONE
+ !                        routine parameters
+
+ INTEGER (kind=4), INTENT(IN) :: nvarl
+ LOGICAL, INTENT(IN) :: quad,mems(:)
+ REAL (kind=8), INTENT(IN) :: cartd(:,:),romtx(:,:,:),t(:,:),&
+                             dx(:,:),tm(:,:,:)
+ REAL (kind=8), INTENT(IN OUT) :: estif(:),sgtot(:)
+ REAL (kind=8), POINTER :: cd(:,:,:)
+
+ !                        local variables
+
+ INTEGER (kind=4) j,l,ni,nj,idof,jdof,poses,idofr,jdofr
+
+ REAL (kind=8) coef1,coef2,ckgeo
+
+ !                   local functions
+
+ INTEGER (kind=4) poesti             !position i,j in estif(nxn)
+ poesti(ni,nj,nvarl) = (2*nvarl-ni)*(ni-1)/2 + nj
+
+ !influence of membrane stresses
+
+ IF(quad)THEN
+   sgtot(1:3) = sgtot(1:3)/3d0
+   DO j=1,3
+     IF(mems(j))THEN
+       CALL kgem03(nvarl,cd(:,:,j),tm(:,:,j),sgtot,estif,.TRUE.,j)
+     ELSE
+       CALL kgem03(nvarl,cartd,dx,sgtot,estif,.FALSE.,0)
+     END IF
+   END DO
+ ELSE
+   CALL kgem03(nvarl,cartd,dx,sgtot,estif,.FALSE.,0)
+ END IF
+
+ !     influence of Bending stresses
+
+ DO ni = 1,3                                         !  node i
+   idof = (ni-1)*5           !initial translational DOF i
+   !      ni   with   ni
+   coef1 = sgtot(4)*cartd(ni,1) + sgtot(6)*cartd(ni,2)
+   coef2 = sgtot(6)*cartd(ni,1) + sgtot(5)*cartd(ni,2)
+   ckgeo = 2d0*(DOT_PRODUCT(t(:,ni),dx(:,1))*coef1 &  !-2 for side node derivatives
+              + DOT_PRODUCT(t(:,ni),dx(:,2))*coef2)
+   !      delta t(i)  with  delta t(i)
+   idofr= idof+3  !initial rotaional DOF i
+   DO l = 1,2                  !for each rotational DOF i
+     poses = poesti(idofr+l,idofr+l,nvarl)
+     estif(poses) = estif(poses) + ckgeo
+   END DO
+   ! HERE IT MUST BE CHECKED WICH DOF IS GREATER THAN THE OTHER
+   !      delta u(i)  with  delta t(i)
+   !      ni  with  nj
+   DO nj = 1,3        !for every side node
+     jdofr= nj*5-2      !(nj-1)*5 + 3       !initial rotational DOF j
+
+     ckgeo = -(coef1*cartd(nj,1) + coef2*cartd(nj,2))*2d0   !-2 for side node derivatives
+
+     IF( idof < jdofr )THEN
+       DO j = 1,3 !ndime         !for every translational DOF J
+         !  over the submatrix diagonal  delta u(i)   with   delta t(j)
+         poses = poesti(idof+j,jdofr+1,nvarl)           !t_dof > r_dof
+         estif(poses) = estif(poses) - ckgeo*romtx(j,2,nj)
+         poses = poses + 1
+         estif(poses) = estif(poses) + ckgeo*romtx(j,1,nj)
+       END DO
+     ELSE
+       DO j = 1,3 !ndime         !for every translational DOF J
+         !  over the submatrix diagonal  delta u(i)   with   delta t(j)
+         poses = poesti(jdofr+1,idof+j,nvarl)           !t_dof > r_dof
+         estif(poses) = estif(poses) - ckgeo*romtx(j,2,nj)
+         poses = poesti(jdofr+2,idof+j,nvarl)           !t_dof > r_dof
+         estif(poses) = estif(poses) + ckgeo*romtx(j,1,nj)
+       END DO
+     END IF
+   END DO                                              ! nj
+ END DO                                                ! ni
+ RETURN
+
+ END SUBROUTINE kgeo03
+ SUBROUTINE kgem03(nvarl,cartd,dx,sgtot,estif,quad,jj)
+
+ !influence of membrane stresses
+ IMPLICIT NONE
+ !                        routine parameters
+
+ INTEGER (kind=4), INTENT(IN) :: nvarl,jj
+ LOGICAL, INTENT(IN) :: quad
+ REAL (kind=8), INTENT(IN) :: cartd(:,:),dx(:,:),sgtot(:)
+ REAL (kind=8), INTENT(IN OUT) :: estif(:)
+
+ !                        local variables
+
+ INTEGER (kind=4) j,ni,nj,idof,jdof,kdof,poses
+
+ REAL (kind=8) coef1,coef2,ckgeo
+
+ !                   local functions
+
+ INTEGER (kind=4) poesti             !position i,j in estif(nxn)
+ poesti(ni,nj,nvarl) = (2*nvarl-ni)*(ni-1)/2 + nj
+
+ IF(quad) kdof= jj*3+12       !initial translational DOF of extra node
+ DO ni = 1,3              ! for each node i
+   idof = (ni-1)*5          !initial translational DOF i
+   !                                           [ n11  n12 ]
+   !   [coef1,coef2] = [d(n(i)/dx,d(n(i)/dy] * [ n21  n22 ]
+   coef1 = sgtot(1)*cartd(ni,1) + sgtot(3)*cartd(ni,2)
+   coef2 = sgtot(3)*cartd(ni,1) + sgtot(2)*cartd(ni,2)
+   !  for every node greater or equal than ni
+   DO nj = ni,3              !node j
+     jdof = (nj-1)*5           !initial translational DOF j
+     !  ckgeo = [coef1,coef2] . [d(n(j)/dx,d(n(j)/dy]
+     ckgeo = coef1*cartd(nj,1) + coef2*cartd(nj,2)
+     DO j=1,3 !ndime              !translational DOF j
+       poses = poesti(idof+j,jdof+j,nvarl)           ! diagonals,
+       estif(poses) = estif(poses) + ckgeo
+     END DO
+   END DO                                            ! nj
+   IF(quad)THEN
+     !  ckgeo = [coef1,coef2] . [d(n(j)/dx,d(n(j)/dy]
+     ckgeo = coef1*cartd(4,1) + coef2*cartd(4,2)
+     DO j=1,3 !ndime              !translational DOF j
+       poses = poesti(idof+j,kdof+j,nvarl)           ! diagonals,
+       estif(poses) = estif(poses) + ckgeo
+     END DO
+   END IF
+ END DO                                              ! ni
+ IF(quad)THEN
+   coef1 = sgtot(1)*cartd(4,1) + sgtot(3)*cartd(4,2)
+   coef2 = sgtot(3)*cartd(4,1) + sgtot(2)*cartd(4,2)
+   !  ckgeo = [coef1,coef2] . [d(n(j)/dx,d(n(j)/dy]
+   ckgeo = coef1*cartd(4,1) + coef2*cartd(4,2)
+   DO j=1,3 !ndime              !translational DOF j
+     poses = poesti(kdof+j,kdof+j,nvarl)           ! diagonals,
+     estif(poses) = estif(poses) + ckgeo
+   END DO
+ END IF
+ RETURN
+ END SUBROUTINE kgem03

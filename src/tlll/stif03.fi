@@ -1,0 +1,82 @@
+ SUBROUTINE stif03(heade, coord, euler, gstif, force, stabq, quad, nnode, nstre, zigzag)
+!********************************************************************
+!
+!***   evaluation of tangent stiffness matrix for shell elements
+!
+!********************************************************************
+ IMPLICIT NONE
+!***  routine parameters
+ INTEGER(kind=4), INTENT(IN) :: nnode,nstre
+ REAL (kind=8), INTENT(IN) :: coord(:,:), euler(:,:), stabq
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:),force(:)
+ TYPE (ele03), POINTER :: heade
+ LOGICAL :: quad
+ LOGICAL, INTENT(IN) :: zigzag
+!***  local variables
+ TYPE (ele03), POINTER :: e
+ LOGICAL   plast,newmt,dum
+ INTEGER (kind=4):: ielem,isec,np,matty,osec,nlayr,nvarl,secty,ndofe,ndof
+ REAL (kind=8) :: thick,sf(3)
+ REAL (kind=8), ALLOCATABLE :: stiff(:)
+ TYPE(section), POINTER :: sec
+ TYPE(mater), POINTER :: mat
+
+!***   loop over all the elements
+
+ osec = -1
+ e => heade
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = e%numel
+   isec = e%matno
+   newmt = osec /= isec
+   IF(newmt)THEN                     !if new material, get properties
+     sec => psecs(isec)%p
+     secty = sec%secty
+     matty = sec%secdef(3)
+     IF( sec%mabas > 0 )THEN
+       mat => sec%mtbas
+       plast = matty <= 2 .AND. mat%matdef(3) > 1
+       nlayr = sec%iprop(1)
+     ELSE     !for sectyp = 15
+       plast = .FALSE.
+       nlayr = 1          !integrated
+     END IF
+     thick = sec%rprop(1)
+     ndofe = 5
+     IF( secty == 15 .AND. zigzag ) ndofe = 7
+     ndof = ndofe
+     IF( quad ) ndof = ndofe + 3
+     nvarl = ndof*3
+     IF( ALLOCATED(stiff)) DEALLOCATE(stiff)
+     ALLOCATE(stiff(nvarl*(nvarl+1)/2))
+     IF(matty == 0 )THEN
+       np = 12
+       CALL dmatx6(sec%rprop(6),sec%rprop(np),dum,dum,dum,dum,newmt)
+     ELSE
+       np = MIN(21,sec%secdef(2))
+       IF(matty == 5)THEN
+         IF(sec%rprop(4) /= 0d0 )THEN
+           sf = sec%rprop(4)
+         ELSE
+           sf = sec%rprop(71:73)
+         END IF
+       END IF
+     END IF
+     osec = isec
+   END IF
+   !  zero the elemental stiffness matrix
+   stiff = 0d0
+
+   CALL tanm03(nvarl,nnode,ndofe,nstre,nlayr,plast,matty,quad,e%mems,e%cd,     &
+               e%lnods,sec%rprop(np:),sec%rprop(6:),sf,coord,euler,            &
+               e%dvolu,e%cartd,e%jacin,e%strsg,e%ambda,e%ehist,                &
+               e%strap,e%stres,stiff,newmt,thick,e%qbar,stabq,e%nangl,e%jas)
+
+   CALL stiaux_tlll(nnode,e%lnods,nvarl,ndofe,stiff(1),force(1),gstif(1) )
+   e => e%next
+ END DO
+ DEALLOCATE(stiff)
+ RETURN
+
+ END SUBROUTINE stif03

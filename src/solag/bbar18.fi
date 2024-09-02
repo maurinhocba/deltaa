@@ -1,0 +1,21 @@
+ SUBROUTINE bbar18(cd,bb,t1,vol)
+ ! computes volumetric matrix for SOLAG
+ IMPLICIT NONE
+ ! dummy arguments
+ REAL(Kind=8), INTENT(IN) :: cd(8,3), & ! shape functions cartesyan derivatives
+                             t1(3,3), & ! local covariant triad
+                             vol        ! gauss point volume
+ REAL(Kind=8), INTENT(IN OUT) :: bb(3,8)   !modified (B-Bar) volumetric matrix
+ ! local variables
+ INTEGER(kind=4) :: i,n
+ REAL(kind=8) :: f
+
+  DO n=1,8     !for each node
+    DO i=1,3   !for each in-plane direction
+      f = cd(n,1)*t1(i,1) + cd(n,2)*t1(i,2) + cd(n,3)*t1(i,3)
+      bb(i,n) = bb(i,n) + f*vol ! DOT_PRODUCT(cd(n,:),t1(i,:))*vol
+    END DO
+  END DO
+
+ RETURN
+ END SUBROUTINE bbar18

@@ -1,0 +1,92 @@
+     SUBROUTINE modvec30(rl1,rl,bcode,bounc,x,nab)
+     !modifies a vector using the relation between mid-side nodes and butterfly scheme
+     ! considering boundary conditions
+     IMPLICIT NONE
+     INTEGER (kind=4), INTENT(IN) :: bcode
+     REAL(kind=8), INTENT(IN) :: rl1(3,6),x(3,12),nab(:,:)
+     REAL(kind=8), INTENT(OUT) :: rl(3,12)
+     LOGICAL, INTENT(IN) :: bounc(6)
+
+     REAL(kind=8) :: amod(36,18)
+
+     IF( bcode == 0 )THEN
+       rl = MATMUL(rl1,TRANSPOSE(ar))
+     ELSE
+       IF( ANY(bounc)) THEN
+         amod = abou(:,:,bcode)
+         SELECT CASE (bcode)
+         CASE (1)
+           IF( bounc(1) .AND. bounc(5) ) CALL proym30(x,nab(:,1),amod,bcode,10,1,5,3) !if clamped or symmetry line at node 1
+           IF( bounc(1) .AND. bounc(6) ) CALL proym30(x,nab(:,2),amod,bcode,11,1,6,2) !if clamped or symmetry line at node 1
+         CASE (2)
+           IF( bounc(1) )THEN !if clamped or symmetry line
+             IF( bounc(5)) CALL proym30(x,nab(:,1),amod,bcode,10,1,5,3)
+             IF( bounc(6)) CALL proym30(x,nab(:,1),amod,bcode,11,1,6,2)
+           END IF
+           IF( bounc(2)) THEN !if clamped or symmetry line
+             IF( bounc(4)) CALL proym30(x,nab(:,2),amod,bcode,12,2,6,1)
+             IF( bounc(6)) CALL proym30(x,nab(:,2),amod,bcode, 7,4,2,3)
+           END IF
+         CASE (3)
+           IF( bounc(1) .AND. bounc(2)) CALL proym30(x,nab(:,1),amod,bcode, 6,2,1,3)  !if clamped or symmetry line at node 1
+         CASE (4)
+           IF( bounc(1) .AND. bounc(5)) CALL proym30(x,nab(:,1),amod,bcode,10,1,5,3)  !if clamped or symmetry line at node 1
+           IF( bounc(1) .AND. bounc(2)) CALL proym30(x,nab(:,2),amod,bcode, 6,2,1,3)  !if clamped or symmetry line at node 1
+         CASE (5)
+           IF( bounc(1) .AND. bounc(2)) CALL proym30(x,nab(:,1),amod,bcode, 6,2,1,3)  !if clamped or symmetry line at node 1
+           IF( bounc(2) .AND. bounc(4)) CALL proym30(x,nab(:,2),amod,bcode, 7,4,2,3)  !if clamped or symmetry line at node 1
+         CASE (6)
+           IF( bounc(3) .AND. bounc(1)) THEN !if clamped or symmetry line at node 1
+             CALL proym30(x,nab(:,1),amod,bcode, 5,1,3,2)
+           END IF
+           IF( bounc(1) .AND. bounc(2)) THEN !if clamped or symmetry line at node 1
+             CALL proym30(x,nab(:,2),amod,bcode, 6,2,1,3)
+           END IF
+         END SELECT
+         CALL proma2(rl,rl1,amod,1,36,18)
+       ELSE
+         rl = MATMUL(rl1,TRANSPOSE(mb(:,:,bcode)))
+       END IF
+     END IF
+
+     END SUBROUTINE modvec30
+!---------------------------------------------------------
+     SUBROUTINE proym30(x,tb,amod,bcode,i,j,k,l)
+     ! modifies boundary A matrix for symmetry or clamped condition
+     IMPLICIT NONE
+     REAL(kind=8), INTENT(IN) :: x(:,:),tb(3)     !x: coordinates and tb: normal to symmetry plane
+     REAL(kind=8), INTENT(IN OUT) :: amod(36,18)  !modified A matriz at boundary
+     INTEGER(kind=4), INTENT(IN) :: bcode,      & !boundary case
+                                    i,          & !slave node
+                                    j,k,l         !master nodes
+
+     INTEGER(kind=4):: n,ii,jj,kk,ll,nn           !different indexes
+     REAL(kind=8) :: f,m2f,p(3,3),ts(3),t(3)      !factors, proyection matrix and auxiliar vectors
+
+     ! compute shell normal at boundary
+     ts = x(:,j) - x(:,k)        !side vector
+     CALL vecuni(3,ts,f)         !unit side vector
+     CALL vecpro(tb,ts,t)        !shell normal
+     ! special proyection matrix for boundary nodes
+     p(:,1) = - t(1)*t
+     p(:,2) = - t(2)*t
+     p(:,3) = - t(3)*t
+
+     ii = 3*i-2   !first  position of slave DOFS
+     jj = 3*j-2   !first  position of master 1 DOFS
+     kk = 3*k-2   !first  position of master 2 DOFS
+     ll = 3*l-2   !first  position of master 3 DOFS
+
+     DO n=4,6     !for each mid-side node in six-node element
+       IF(.NOT.modif(n-3,bcode))CYCLE  !if a boundary node CYCLE
+       IF(ar(i,n) == 0d0 )CYCLE        !if no dependance with slave node CYCLE
+       f = ar(i,n)               !dependance factor for master side node
+       m2f = -2d0*f              !dependance factor for master inner node
+       nn = 3*n-2                      !first position of node in element
+       amod(jj:jj+2,nn:nn+2) = amod(jj:jj+2,nn:nn+2) + f*p   !boundary node
+       amod(kk:kk+2,nn:nn+2) = amod(kk:kk+2,nn:nn+2) + f*p   !boundary node
+       amod(ll:ll+2,nn:nn+2) = amod(ll:ll+2,nn:nn+2) + m2f*p !inner node
+     END DO
+
+     RETURN
+     END SUBROUTINE proym30

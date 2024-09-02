@@ -1,0 +1,147 @@
+SUBROUTINE ensm24(locst,glost,is,fc,sides)
+!*************************************************************************
+!
+!     assembles a local symmetric matrix into the global symmetric matrix
+!     both matrices are stored as arrays of the upper triangle only
+!
+!*************************************************************************
+IMPLICIT NONE
+INTEGER (kind=4),INTENT(IN) :: sides(3)
+REAL (kind=8),INTENT(IN) :: locst(1:*),fc(2,3)
+REAL (kind=8),INTENT(IN OUT) :: glost(1:*)
+LOGICAL, INTENT(IN) :: is(3)
+
+INTEGER, PARAMETER :: colp(27) = (/ &
+1, 28, 54, 79, 103, 126, 148, 169, 189, 208, 226, 243, 259, 274, 288, &
+301, 313, 324, 334, 343, 351, 358, 364, 369, 373, 376, 378 /)
+
+
+
+INTEGER, PARAMETER :: nvarl = 18
+
+INTEGER (kind=4) :: i,j,k,l,m,ib,ie,jb,je,neci,necj,necl,necm,posit,  &
+                    nesdf(18),lm(18)
+REAL    (kind=8) :: fm,fl,stk,ftsdf(18)
+
+l = 1
+k = 0
+DO i=1,3  !for each main node
+  IF( is(i) )THEN
+    DO j=1,3
+      k = k+1
+      lm(k) = k
+    END DO
+  ELSE
+    DO j=1,3
+      k = k+1
+      lm(k) = -l
+      ftsdf(l:l+1) = fc(:,i)
+      nesdf(l:l+1) = (/ k, k+18 /)
+      l = l+2
+    END DO
+  END IF
+END DO
+
+DO i=1,3  !for each additional node
+  IF( sides(i) == 1 )THEN
+    DO j=1,3
+      k = k+1
+      lm(k) = k
+    END DO
+  ELSE
+    lm(k+1:k+3) = 0
+    k = k + 3
+  END IF
+END DO
+
+
+
+k = 0                                            !post. in local matrix
+DO i = 1,nvarl                                   !for each column
+  neci = lm(i)                                   !assoc. equation
+  IF(neci > 0) THEN                              !if active dof
+    DO j = i,nvarl                               !for each row
+      necj = lm(j)                               !assoc. equation
+      k = k+1                                    !post. in local matrix
+      stk = locst(k)                             !value to assemble
+      IF(necj > 0) THEN                          !if active dof
+        glost(k)=glost(k)+stk                    !sums on extended matrix
+      ELSE IF(necj < 0 ) THEN                    !if slave dof
+        jb = -necj                               !first positon in array
+        je = jb+1
+        DO l=jb,je                               !for each master dof
+          necl=nesdf(l)                          !assoc. equation
+          IF(necl <= neci) THEN                !if neq(l) <= neq(i)
+            posit = colp(necl) + neci - necl  !post. in global matrix
+          ELSE                                 !if neq(l) >  neq(i)
+            posit = colp(neci) + necl - neci  !post. in global matrix
+          END IF
+          glost(posit)=glost(posit)+stk*ftsdf(l)  !sums on global matrix
+          IF(necl == neci)  &                       !diagonal terms
+             glost(posit)=glost(posit)+stk*ftsdf(l) !sums twice
+        END DO                                   !l=jb,je
+      END IF
+    END DO                                       !j=i,nvarl
+  ELSE IF(neci < 0 ) THEN                    !if slave dof
+    ib = -neci                               !first positon in array
+    ie = ib+1                                    !last position in array
+    !         diagonal block (i,i)
+    k  = k+1                                     !position in local matrix
+    stk = locst(k)                               !value to assemble
+    DO m=ib,ie
+      fm = ftsdf(m)                              !assoc. factor
+      necm=nesdf(m)                              !assoc. equation
+      posit = colp(necm)                      !assoc. position
+      glost(posit)=glost(posit)+stk*fm*fm      !sums on global matrix
+      DO l=m+1,ie                              !for each master dof
+        fl = ftsdf(l)                          !assoc. factor
+        necl=nesdf(l)                          !assoc. equation
+        IF(necl <= necm) THEN                 !if neq(l) <= neq(m)
+          posit = colp(necl) + necm - necj  !post. in global matrix
+        ELSE                                 !if neq(l) >  neq(m)
+          posit = colp(necm) + necl - necm  !post. in global matrix
+        END IF
+        glost(posit)=glost(posit)+stk*fl*fm  !sums on global matrix
+      END DO                                   !l=m+1,ie
+    END DO                                       !m=ib,ie
+    !         non diagonal blocks (j,i)
+    DO j = i+1,nvarl                             !for each row
+      k  = k+1                                   !position
+      stk = locst(k)                             !value to assemble
+      DO m=ib,ie
+        fm = ftsdf(m)                            !assoc. factor
+        necm=nesdf(m)                            !assoc. equation
+        necj = lm(j)                           !assoc. equation
+        IF(necj > 0) THEN                      !if active dof
+          IF(necj <= necm) THEN                 !if neq(j) <= neq(m)
+            posit = colp(necj) + necm - necj  !post. in global matrix
+          ELSE                                 !if neq(j) >  neq(m)
+            posit = colp(necm) + necj - necm  !post. in global matrix
+          END IF
+          glost(posit)=glost(posit)+stk*fm     !sums on global matrix
+          IF(necm == necj) &                   !diagonal terms
+             glost(posit)=glost(posit)+stk*fm  !sums twice
+        ELSE IF(necj < 0 ) THEN!if slave dof too
+          jb = -necj                          !first positon in array
+          je = jb+1                           !last position in array
+          DO l=jb,je                           !for each master dof
+            fl = ftsdf(l)                      !assoc. factor
+            necl=nesdf(l)                      !assoc. equation
+            IF(necl <= necm) THEN             !if neq(l) <= neq(m)
+              posit= colp(necl)+necm-necl   !post. in global matrix
+            ELSE                             !if neq(l) >  neq(m)
+              posit= colp(necm)+necl-necm   !post. in global matrix
+            END IF
+            glost(posit)=glost(posit)+stk*fl*fm !sums on global matrix
+            IF(necl == necm)glost(posit)=  & !diagonal terms
+                      glost(posit)+stk*fl*fm !sums twice
+          END DO                               !l=jb,je
+        END IF                                 !necj ?
+      END DO                                     !m=ib,ie
+    END DO                                       !j=i+1,nvarl
+  ELSE                                           !neci = 0
+    k = k+nvarl-i+1                              !correct pointer
+  END IF
+END DO                                           !i=1,nvarl
+
+END SUBROUTINE ensm24

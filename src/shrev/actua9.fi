@@ -1,0 +1,42 @@
+ SUBROUTINE actua9(heade,ntype)
+ IMPLICIT NONE
+ TYPE(ele09), POINTER :: heade
+ INTEGER (kind=4) :: ntype
+
+ INTEGER (kind=4) :: isec,nlayr,l,m,osec
+
+ TYPE(ele09), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL :: plast
+
+ osec = -1
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED(e) ) EXIT
+   isec = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     plast = sec%mtbas%matdef(3) > 1
+     nlayr = sec%iprop(1)
+     IF( ntype == 4 ) plast = .FALSE.
+     osec = isec
+   END IF
+   IF( plast ) THEN   !Yield must be > zero
+     IF( nlayr == 1 )THEN
+       e%ehist(3,:) = e%ehist(1,:)
+       e%strap(:,:,2) = e%strap(:,:,1)
+     ELSE
+       e%ehist(3,:) = e%ehist(1,:)
+       m = 0
+       DO l=1,nlayr
+         e%strap(m+1:m+5,:,2) = e%strap(m+1:m+5,:,1)
+         e%strap(m+6,:,2) = e%strap(m+6,:,2) + e%strap(m+6,:,1)
+         m = m + 6
+       END DO
+     END IF
+   END IF
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE actua9

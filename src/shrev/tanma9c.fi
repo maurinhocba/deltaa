@@ -1,0 +1,48 @@
+ SUBROUTINE tanma9c( dmatx,jac,stiff )
+ !***********************************************************************
+ !
+ !****this routine compute the stiffness matrix for C-beam (elem.9)
+ !
+ !***********************************************************************
+ IMPLICIT NONE
+    !***  routine parameters
+ REAL (kind=8), INTENT(IN) :: dmatx(2),jac(2)
+ REAL (kind=8), INTENT(OUT) :: stiff(21)
+    !***  local variables
+ INTEGER (kind=4) :: i,j,k
+ REAL    (kind=8) :: ka, k11,k12,k22,k2, s(6,6),r(6,6),ca,sa
+
+ ka = dmatx(1)/jac(1)
+ k2 = 2d0*dmatx(2)/jac(1)
+ k22= 2d0*k2
+ k12= 3d0*k2/jac(1)
+ k11= 2d0*k12/jac(1)
+
+ s = RESHAPE((/ ka, 0d0, 0d0, -ka, 0d0, 0d0, &
+               0d0, k11, k12, 0d0,-k11, k12, &
+               0d0, k12, k22, 0d0,-k12, k2 , &
+               -ka, 0d0, 0d0,  ka, 0d0, 0d0, &
+               0d0,-k11,-k12, 0d0, k11,-k12, &
+               0d0, k12, k2 , 0d0,-k12, k22 /),(/6,6/))
+
+ ca = COS(jac(2))
+ sa = SIN(jac(2))
+ r = RESHAPE((/  ca,  sa, 0d0, 0d0, 0d0, 0d0, &
+                -sa,  ca, 0d0, 0d0, 0d0, 0d0, &
+                0d0, 0d0, 1d0, 0d0, 0d0, 0d0, &
+                0d0, 0d0, 0d0,  ca,  sa, 0d0, &
+                0d0, 0d0, 0d0, -sa,  ca, 0d0, &
+                0d0, 0d0, 0d0, 0d0, 0d0, 1d0 /),(/6,6/))
+
+ s= MATMUL(MATMUL(r,s),TRANSPOSE(r))
+ !WRITE(55,"(6f12.2)")s
+ k=0
+ DO i=1,6
+   DO j=i,6
+     k = k+1
+     stiff(k) = s(i,j)
+   END DO
+ END DO
+
+ RETURN
+ END SUBROUTINE tanma9c

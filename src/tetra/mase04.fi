@@ -1,0 +1,40 @@
+ SUBROUTINE mase04 (nreqs,nelem,heade,ngrqs,narch,angle,sname)
+
+ !performs the final tasks in ACVD04 at a restart
+
+ IMPLICIT NONE
+ INTEGER (kind=4) :: nreqs,nelem,narch
+ INTEGER (kind=4), POINTER  :: ngrqs(:)
+ REAL (kind=8 ) :: angle(:)
+ TYPE (ele04), POINTER  :: heade
+ CHARACTER (len=*) :: sname
+
+ INTEGER (kind=4) i
+ TYPE (ele04), POINTER :: e
+
+ WRITE(17,ERR=9) 5,nelem,sname      !elm_type, number of elements, set_name
+ WRITE(17,ERR=9) 1,4,8              !1=ngaus for each direction 4=nnode 8=nvarg
+ e => heade                         !point to first element
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT   !if all elements processed, exit loop
+   WRITE(17,ERR=9)e%matno,e%lnods(1:4)    !material, and nodes
+   e => e%next                      !point to next element
+ END DO
+
+ !e => heade                         !point to first element
+ !DO
+ !  IF (.NOT.ASSOCIATED (e) ) EXIT   !if all elements processed, exit loop
+ !  WRITE(17,ERR=9)e%angle+angle           !local angle (not valid)
+ !  e => e%next                      !point to next element
+ !END DO
+
+ IF(nreqs > 0) THEN                         !if output requested
+   CALL openfi(nfile=21,narch=narch)        !open file
+   WRITE(narch,ERR=9)nreqs,9,(ngrqs(i),i=1,nreqs) !write header
+   WRITE(narch,err=9) 4,sname,'S_xx ','S_yy ','S_zz ','S_xy ','S_xz ', &
+                              'S_yz ','Eps  ','Eqs  ','S_y  '
+ END IF
+
+ RETURN
+ 9 CALL runen2('')
+ END SUBROUTINE mase04

@@ -1,0 +1,42 @@
+ SUBROUTINE kgeo11(nvarl,ntype,shape,x,jac,r0,t,str,stiff)
+ !******************************************************************************
+ !
+ !     computes geometric stiffness tangent matrix for 2-d shell/beam elements
+ !
+ !******************************************************************************
+ IMPLICIT NONE
+ !***  routine parameters
+ INTEGER (kind=4), INTENT(IN) :: nvarl,ntype
+ REAL (kind=8), INTENT(IN) :: shape(2),x(2,2),r0,jac,str(:),t(2)
+ REAL (kind=8), INTENT(IN OUT) ::  stiff(:)
+ !***  local variables
+ INTEGER (kind=4) i,j,ni,nj,posit,pstiff
+ REAL    (kind=8) t1,t2,r,r02m1,value,derxi(2),dx(2)
+ pstiff(ni,nj,nvarl) = (2*nvarl-nj)*(nj-1)/2 + ni  !nj <= ni
+
+ !***code
+ t1 = t(1)
+ t2 = t(2)
+ derxi= (/ -1.d0, 1.0d0 /)/jac     ! N(1),s  N(2),s
+ dx   = MATMUL(x,derxi)            !dx/ds
+ IF( ntype == 3 )THEN
+   r    = DOT_PRODUCT(x(1,1:2),shape)
+   r02m1 = 1d0/r0**2
+ END IF
+ DO j=1,2           !for each node J
+   nj = 2*(j-1)     !position of first DOF of the J node
+   DO i=j,2         !for each node I
+     ni = 2*(i-1)   !position of first DOF of the I nod
+     !         contribution between u-u (MEMBRANE PART)
+     posit = pstiff(ni+1,nj+1,nvarl)
+     value = derxi(i)*derxi(j)*str(1)
+     IF(ntype == 3)stiff(posit) = stiff(posit)                   &
+&                              + r02m1*shape(i)*shape(j)*str(2)
+     stiff(posit) = stiff(posit) + value
+     posit = pstiff(ni+2,nj+2,nvarl)
+     stiff(posit) = stiff(posit) + value
+
+   END DO
+ END DO
+ RETURN
+ END SUBROUTINE kgeo11

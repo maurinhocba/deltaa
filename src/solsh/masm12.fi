@@ -1,0 +1,202 @@
+ SUBROUTINE masm12(ndime,heade,emass,mass,sumat,lumpd,ifpre,zigzag,nnb)
+
+ USE npo_db, ONLY : coord
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd,zigzag
+ INTEGER (kind=4), INTENT(IN) :: nnb,ndime,ifpre(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele12 ), POINTER :: heade
+
+ INTEGER (kind=4) :: isec,idofn,lm(ndime,nnb),osec,g,i,j,k,ii,n,l,nv,nv2,na2,nnf,lma(2,nnb/2)
+ REAL (kind=8) :: suma,voli,rhoel,m(nnb),ix(2),im(2),at,ag,f1,f2,mz(nnb/2),denss
+ REAL (kind=8), ALLOCATABLE :: a(:),ms(:)
+ TYPE( ele12 ), POINTER :: e
+ TYPE (section), POINTER :: sec
+
+
+ INTEGER(kind=4), PARAMETER :: ng = 2,ngaus=8,nnode=8
+ REAL(kind=8) :: sh(nnode,ngaus),pg(ng),wg(ng),der(nnode,3,ngaus),ww(ngaus),x(3,nnode),  &
+                 cd(3,nnode),jac,thick
+
+
+ INTEGER (kind= 4) posmt
+ posmt(nv2,i,j) = (nv2-i)*(i-1)/2+j  !position i,j in mass(nv x nv)
+
+
+ !!!!!!!!!!!!!
+ IF( nnb == nnode .AND. .NOT.lumpd) THEN   !for 8-node hexahedra & consistent mass
+   CALL gaussq(ng,pg,wg)
+   g = 0
+   DO i=1,ng          !zeta
+     DO j=1,ng          !eta
+       DO k=1,ng          !xi
+         g = g+1
+         CALL shape5(der(:,:,g),sh(1,g),pg(k),pg(j),pg(i),nnode)
+         ww(g) = wg(i)*wg(j)*wg(k)
+       END DO
+     END DO
+   END DO
+ END IF
+ !!!!!!!!!!!!!
+
+ ! initialization
+ n = nnb*(nnb+1)/2                    !size of array a
+ l = (nnb*ndime*(nnb*ndime+1))/2      !size of mass matrix
+ ALLOCATE(a(n),ms(l))
+ nv = nnb*ndime     !number of DOFs
+ nv2 = 2*nnb*ndime  !twice the number of DOFs
+ nnf = nnb/2        !number of face nodes
+ na2 = 2*nnb
+ suma=0.
+ osec = -1
+ ms = 0D0
+
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED (e) )EXIT
+   !  material and density
+   isec = e%matno
+   IF( osec /= isec )THEN
+     sec => psecs(isec)%p
+     rhoel = sec%rprop(3) !material density
+     thick = sec%rprop(1) !section thickness
+     denss = sec%rprop(5) !superficial density
+     f1 = sec%rprop(118)
+     f2 = 1d0-f1
+     IF( sec%secty == 5 .AND. zigzag ) ix = sec%rprop(119:120) !/rhoel
+     osec = isec
+   END IF
+
+   IF(nnb == 6 )THEN    !PRISM
+     mz(1:3) = 1d0
+   ELSE                 !HEXAHEDRA
+     mz(1) = 2d0*(e%area(1,1)+e%area(2,1))   !proportional too associated areas
+     mz(2) = 2d0*(e%area(2,1)+e%area(3,1))
+     mz(3) = 2d0*(e%area(3,1)+e%area(4,1))
+     mz(4) = 2d0*(e%area(4,1)+e%area(1,1))
+   END IF
+
+   suma = suma + e%dvol*rhoel   !add to total mass
+   voli = e%dvol*rhoel/nnf      !Nodal mass
+
+   m(1:nnf)     = mz*f1*voli
+   m(nnf+1:nnb) = mz*f2*voli
+   IF( zigzag ) mz = mz*e%dvol/thick /nnf
+
+   IF(.NOT.lumpd) THEN    !Consistent matrix
+     IF(nnb == 6 )THEN
+       a((/ 1, 7,12/))= voli/3d0*f1                           !  1  2  3  4  5  6
+       a((/16,19,21/))= voli/3d0*f2                           !     7  8  9 10 11
+       a((/ 2, 3, 8/))= voli/6d0*f1                           !       12 13 14 15
+       a((/17,18,20/))= voli/6d0*f2                           !          16 17 18
+       a((/ 4,10,15/))= voli/12d0                             !             19 20
+       a((/5,6,9,11,13,14/))= voli/24d0                       !                21
+     ELSE
+       !!!
+       x = coord(:,e%lnods(:))
+       a = 0d0  !initializes
+       DO g=1,8
+         CALL jacob5(cd,der(1,1,g),jac,x,nnode,e%numel,l)
+         jac = jac*rhoel*ww(g)
+         k = 0
+         DO i=1,nnode
+           DO j=i,nnode
+             k=k+1
+             a(k) = a(k) + jac*sh(j,g)*sh(i,g)
+           END DO
+         END DO
+       END DO
+       !!!
+       !g = 0
+       !DO l=1,2
+       !  DO k=1,4
+       !    ag = voli*e%area(k,1)/1.5d0
+       !    i = k-1
+       !    j = k
+       !    IF (i == 0)THEN
+       !     i=1
+       !     j=4
+       !    END IF
+       !    ii = posmt(na2,i+g,i+g)
+       !    a(ii) = a(ii)+ag
+       !    ii = posmt(na2,i+g,j+g)
+       !    a(ii) = a(ii)+ag
+       !    ii = posmt(na2,j+g,j+g)
+       !    a(ii) = a(ii)+ag
+       !    IF( g == 0 )THEN
+       !      ii = posmt(na2,i,i+4)
+       !      a(ii) = a(ii)+ag/2d0
+       !      ii = posmt(na2,i,j+4)
+       !      a(ii) = a(ii)+ag/2d0
+       !      ii = posmt(na2,j,j+4)
+       !      a(ii) = a(ii)+ag/2d0
+       !    END IF
+       !  END DO
+       !  g = 4
+       !END DO
+     END IF
+     !END IF
+   END IF
+
+   !---generates lumped mass matrix proportional to diagonal
+
+   DO n=1,nnb
+     l = e%lnods(n)
+     DO idofn=1,ndime
+       emass(idofn,l)=emass(idofn,l)+m(n)
+     END DO
+     IF( zigzag .AND. n <= nnf)THEN
+       im(1) = ix(1)*e%nangl(1,n)**2 + ix(2)*e%nangl(2,n)**2
+       im(2) = ix(2)*e%nangl(1,n)**2 + ix(1)*e%nangl(2,n)**2
+       emass(7,l) = emass(7,l)+im(1)*mz(n)
+       emass(8,l) = emass(8,l)+im(2)*mz(n)
+     END IF
+   END DO
+
+   IF(.NOT.lumpd) THEN
+     !consistent mass matrix  Assembles over MASS(maxa)
+     i = 0                            ! Position in matrix A initialization
+     g = 0                            ! elemental DOF initialization
+     DO n = 1,nnb                     ! For each node
+       j = (n-1)*ndime                ! Initializes Column position in M
+       DO l = n,nnb                   ! For each node
+         i = i+1                      ! Matrix position in A
+         k = (l-1)*ndime              ! Initializes Row position in M
+         DO ii = 1,ndime              ! For each direction in space
+           ms(posmt(nv2,j+ii,k+ii)) = a(i)
+         END DO
+       END DO
+     END DO
+
+
+     lm = ifpre(1:3,e%lnods(1:nnb))
+     CALL ensmat(nv,lm(1,1),ms(1),mass(1))
+     IF(zigzag) THEN
+       i = 0                            ! Position in matrix A initialization
+       g = 0                            ! elemental DOF initialization
+       ms = 0d0
+       DO n = 1,nnf                     ! For each node
+         j = (n-1)*2                    ! Initializes Column position in M
+         DO l = n,nnf                   ! For each node
+           im(1) = (ix(1)*e%nangl(1,n)*e%nangl(1,l) + ix(2)*e%nangl(2,n)*e%nangl(2,l))*2d0/denss
+           im(2) = (ix(2)*e%nangl(1,n)*e%nangl(1,l) + ix(1)*e%nangl(2,n)*e%nangl(2,l))*2d0/denss
+           i = i+1                      ! Matrix position in A
+           k = (l-1)*2                  ! Initializes Row position in M
+           DO ii = 1,2                  ! For each direction in space
+             ms(posmt(nv2,j+ii,k+ii)) = a(i)*im(ii)
+           END DO
+         END DO
+       END DO
+       lma = ifpre(7:8,e%lnods(1:nnf))
+       CALL ensmat(nnb,lma(1,1),ms(1),mass(1))
+     END IF
+   END IF
+
+   e => e%next
+ END DO
+ !IF(iwrit == 1) &
+ WRITE(lures,"(//'  total mass for SOLSH element:', e15.7)")suma
+ sumat = sumat + suma
+ DEALLOCATE (a,ms)
+ RETURN
+ END SUBROUTINE masm12

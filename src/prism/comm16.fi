@@ -1,0 +1,38 @@
+ SUBROUTINE comm16(indic,nelem,nreqs,narch,elsnam,elset,nnode,ngaus,nassp,quad,shell,bbar,bezier)
+
+ ! parameters of present set
+
+ IMPLICIT NONE
+ CHARACTER(len=*) :: elsnam
+ INTEGER (kind=4) :: indic,nelem,nreqs,narch,nnode,ngaus,nassp
+ LOGICAL :: quad,shell,bbar,bezier
+ TYPE (ele16_set) :: elset
+
+ IF(indic == 0) THEN
+    elset%sname = elsnam         !set name
+    elset%nelem = nelem          !number of elements
+    elset%nreqs = nreqs          !number of required elements for output
+    elset%narch = narch          !file for output
+    elset%nnode = nnode          !number of nodes per element
+    elset%ngaus = ngaus          !number of integration points
+    elset%nassp = nassp          !number of shear samplig points
+    elset%quad  = quad           !QUAD option for 6-node prism
+    elset%shell = shell          !ANS for transverse shear
+    elset%bbar  = bbar           !avergare volume strain por 6-node prism
+    elset%bezier= bezier         !use bezier polynomials instead
+  ELSE
+    elsnam = elset%sname
+    nelem  = elset%nelem
+    nreqs  = elset%nreqs
+    narch  = elset%narch
+    nnode  = elset%nnode
+    ngaus  = elset%ngaus
+    nassp = elset%nassp          !number of shear samplig points
+    quad  = elset%quad           !QUAD option for 6-node prism
+    shell = elset%shell          !ANS for transverse shear
+    bbar  = elset%bbar           !avergare volume strain por 6-node prism
+    bezier= elset%bezier         !use bezier polynomials instead
+  END IF
+
+ RETURN
+ END SUBROUTINE comm16

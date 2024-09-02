@@ -1,0 +1,80 @@
+ SUBROUTINE kgmt07(ansmm,ndofn,nvarl,beta,estif)
+ !******************************************************************************
+ !
+ !*****this routine compute the geometric part of the tangent stiffness
+ !                    for element 7 subtype=2 (membrane part)
+ !******************************************************************************
+ IMPLICIT NONE
+ ! USE from module
+ ! nnode : number of element nodes
+ ! dn(nnode,2,3) : natural shape function derivatives at sampling points
+ ! ntan2(nnode,nasmm) : tangential shape function derivatives at sampling points
+ !                        routine parameters
+
+ INTEGER (kind=4), INTENT(IN) :: ansmm,ndofn,nvarl
+
+ REAL (kind=8), INTENT(IN) :: beta(:)
+ REAL (kind=8), INTENT(IN OUT) :: estif(:)
+
+ !                        local variables
+
+ INTEGER (kind=4) j,m,ni,nj,idof,jdof,poses
+
+ REAL    (kind=8)  coef1,coef2,coef3,coef4,coef5,coef6,coef7,coef8,coef9,ckgeo
+
+ !                        local functions
+
+ INTEGER (kind=4) poesti             !position i,j in estif(nxn)
+ poesti(ni,nj,nvarl) = (2*nvarl-ni)*(ni-1)/2 + nj
+
+
+ IF( ansmm == 1 )THEN   !vertex sampling points
+   DO m = 1,3      !for each sampling point
+     DO ni = 1,nnode                                       ! node i
+       idof = (ni-1)*ndofn
+       !                                                 [ n11  n12 ]
+       !         [coef1,coef2] = [d(n(i)/dx,d(n(i)/dy] * [ n21  n22 ]
+       coef1 = beta(m)  *dn(ni,1,m) + beta(m+6)*dn(ni,2,m)
+       coef2 = beta(m+6)*dn(ni,1,m) + beta(m+3)*dn(ni,2,m)
+       !         for every node greater or equal than ni
+       DO nj = ni,nnode                                    ! node j
+         jdof = (nj-1)*ndofn
+         !           ckgeo = [coef1,coef2] . [d(n(j)/dx,d(n(j)/dy]
+         ckgeo = coef1*dn(nj,1,m) + coef2*dn(nj,2,m)
+         DO j=1,3 !ndime
+           poses = poesti(idof+j,jdof+j,nvarl)           ! diagonals,
+           estif(poses) = estif(poses) + ckgeo
+         END DO
+       END DO                                            ! nj
+     END DO                                              ! ni
+   END DO
+ ELSE           !mid-side subtriangles sampling points
+   DO ni = 1,nnode                                         ! node i
+     idof = (ni-1)*ndofn
+
+     coef1 = ntan2(ni,1)*beta(1)
+     coef2 = ntan2(ni,2)*beta(2)
+     coef3 = ntan2(ni,3)*beta(3)
+     coef4 = ntan2(ni,4)*beta(4)
+     coef5 = ntan2(ni,5)*beta(5)
+     coef6 = ntan2(ni,6)*beta(6)
+     coef7 = ntan2(ni,7)*beta(7)
+     coef8 = ntan2(ni,8)*beta(8)
+     coef9 = ntan2(ni,9)*beta(9)
+     !         for every node greater or equal than ni
+     DO nj = ni,nnode                                      ! node j
+       jdof = (nj-1)*ndofn
+
+       ckgeo = coef1*ntan2(nj,1) + coef2*ntan2(nj,2) + coef3*ntan2(nj,3)     &
+             + coef4*ntan2(nj,4) + coef5*ntan2(nj,5) + coef6*ntan2(nj,6)     &
+             + coef7*ntan2(nj,7) + coef8*ntan2(nj,8) + coef9*ntan2(nj,9)
+
+       DO j = 1,3 !ndime
+         poses = poesti(idof+j,jdof+j,nvarl)                 ! diagonals,
+         estif(poses) = estif(poses) + ckgeo
+       END DO
+     END DO                                              ! nj
+   END DO                                                ! ni
+ END IF
+ RETURN
+ END SUBROUTINE kgmt07

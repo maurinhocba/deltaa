@@ -1,0 +1,68 @@
+ SUBROUTINE load17 (igrav,force,gvect,gravy,heade,ngaus,nnode)
+ !********************************************************************
+ !
+ !***  evaluates gravity load vector for solid element 17
+ !
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4) :: igrav,ngaus,nnode
+ REAL (kind=8) :: force(:,:),gvect(2),gravy
+ TYPE (ele17), POINTER  :: heade
+
+ !        local variable
+
+ REAL (kind=8) :: shape(nnode,ngaus),deriv(nnode,2,ngaus), &
+                  posgp(2),weigp(2),xita,eta
+ INTEGER (kind=4) i,j,k,n,l,osec,ngaud
+ REAL (kind=8) weigt,fvect(2,nnode)
+ TYPE (ele17), POINTER :: elem
+ TYPE (section), POINTER :: sec
+
+
+ IF(igrav /= 0) THEN       !if gravity is present
+   ngaud = 2
+   IF( ngaus == 1) ngaud = 1
+   CALL gaussq (ngaud ,posgp ,weigp )
+
+   !       gauss points shape and derivatives of nodal functions
+
+   k = 0
+   DO i=1,ngaud
+     xita = posgp(i)
+     DO j=1,ngaud
+       k = k+1
+       eta = posgp(j)
+       CALL shape3(deriv(1,1,k),shape(1,k),xita,eta,nnode)
+     END DO
+   END DO
+
+   osec = -1
+   elem => heade           !point to first element
+   DO
+     IF (.NOT.ASSOCIATED (elem) ) EXIT    !all elements processed, Exit loop
+
+     j     = elem%matno                     !associated material
+     IF( j /= osec ) THEN
+       sec => psecs(j)%p
+       weigt = gravy*sec%mtbas%prope(5)     !density
+       osec = j
+     END IF
+     IF(weigt /= 0.0d0) THEN                !if not zero
+       DO k=1,ngaus
+         !force vector at each node
+         fvect(1,:) = fvect(1,:) +elem%dvol(k)*weigt*gvect(1)*shape(:,k)
+         fvect(2,:) = fvect(2,:) +elem%dvol(k)*weigt*gvect(2)*shape(:,k)
+       END DO
+       DO n=1,nnode                               !for each node (nnode=4)
+         l = elem%lnods(n)                        !node number
+         force(1:2,l) = force(1:2,l) + fvect(:,n) !sum on global force vector
+       END DO
+     END IF
+
+     elem => elem%next                       !point to next element
+   END DO
+ END IF
+
+ RETURN
+ END SUBROUTINE load17

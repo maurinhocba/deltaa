@@ -1,0 +1,39 @@
+ SUBROUTINE nodx19(nelem,heade,coord,cpx)
+ !*********************************************************************
+ !
+ !     computes Control points  for 6-node Bezier TRIANgles
+ !
+ !*********************************************************************
+ USE npo_db, ONLY : coora,coori,coorc
+ IMPLICIT NONE
+ INTEGER (kind=4) nelem,cpx(:,:)
+ REAL    (kind=8) coord(:,:)
+ TYPE(ele19), POINTER :: heade
+
+ INTEGER (kind=4) i,k,l,n,m
+ TYPE(ele19), POINTER :: e
+
+ e => heade   ! point to first element
+ DO n = 1,nelem      !loop over all the elements
+   DO k = 1,3             !for each side
+     i = e%lnods(k+3)         !mid side node
+     IF( cpx(1,i) == 1 )THEN         !if already computed
+       cpx(1,i) = -1              ! inner node (paired)
+     ELSE                       !not computed yet
+       l = e%lnods(k)           ! first node of the side
+       m = e%lnods(MOD(k,3)+1)  ! third node of the side
+       IF(ALL(coord(:,i) == 0d0) ) THEN      !generate coordinates?
+         coord(:,i) = (coord(:,l)+coord(:,m))/2d0
+       ELSE                       !compute control point coordinates
+         coord(:,i) = 2*coord(:,i) - (coord(:,l)+coord(:,m))/2d0
+       END IF
+       coora(:,i) = coord(:,i)
+       coorc(:,i) = coord(:,i)
+       coori(:,i) = coord(:,i)
+       cpx(1:3,i) = (/ 1, l, m /)  !set as boundary node (not paired), and keep vertex
+     END IF
+  END DO
+  e => e%next
+ END DO
+ RETURN
+ END SUBROUTINE nodx19

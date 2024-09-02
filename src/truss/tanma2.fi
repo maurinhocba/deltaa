@@ -1,0 +1,126 @@
+ SUBROUTINE tanma2(ndime,isec,gv,x,stiff)
+ !***********************************************************************
+ !
+ !**** this routine compute the stiffness matrix for truss (elem.2)
+ !
+ !***********************************************************************
+ IMPLICIT NONE
+ !***  routine parameters
+ INTEGER (kind=4), INTENT(IN) :: ndime, & !problem dimension
+                                 isec     !section number
+
+ REAL (kind=8), INTENT(IN) :: gv(8),     & !internal variables
+                              x(ndime,2)  !present coordinates of the nodes
+ REAL (kind=8), INTENT(OUT) :: stiff(21)  !stiffness matrix
+ !***  local variables
+ INTEGER (kind=4) i,j,m,n,k
+ INTEGER (kind=4), SAVE :: osec = -1, gtype, mtype
+ REAL (kind=8), SAVE :: pr(12)
+ REAL    (kind=8) facto,nol0,dx(ndime),l,aprim,h,epbar,l0,stres,jac
+ TYPE (section), POINTER, SAVE :: sec
+ TYPE ( mater ), POINTER, SAVE :: mat
+ LOGICAL :: newm
+
+
+ newm = isec /= osec   !new material ?
+ IF ( newm )THEN  ! for new material, find sectcion
+   sec => psecs(isec)%p
+   osec = isec
+   gtype = sec%iprop(1)
+   mat => sec%mtbas
+   mtype = mat%mtype
+   IF( mtype == 6 ) pr(1:12) = mat%prope(7:18)
+ END IF
+ !     computes l proyections (gamma coefficients)
+ l0 = gv(1)       !initial length
+ stres = gv(4)    !integrated force
+ dx(1:ndime) = x(1:ndime,2) - x(1:ndime,1)
+ l = SQRT(DOT_PRODUCT(dx,dx))    !present length
+ l = l/l0                        !lambda
+ !     computes the consistent elasto-plastic tangent modulus
+
+ IF( mtype == 1 .OR. mtype == 5 )THEN
+   facto = mat%prope(1)  !young modulus
+   IF( mat%matdef(3) > 1) THEN ! Plastic
+     IF( gv(8) > 0d0) THEN
+       epbar = gv(7)
+       SELECT CASE (mat%matdef(4) )  !isotropic hardening type
+       CASE (1)                      !no hardening
+         aprim = 0d0
+       CASE (2)                      !linear hardening
+         aprim = mat%propp(2)
+       CASE (3)                      !non-linear (exponential) hardening
+         aprim = mat%propp(3)*mat%propp(1)/(mat%propp(2)+epbar)**(1d0-mat%propp(3))
+       CASE (4)                      !linear + saturation law hardening
+         aprim = mat%propp(2) + (mat%propp(4)-mat%propp(1))*mat%propp(3)/ &
+                                     EXP(mat%propp(3)*epbar)
+       END SELECT
+       ! H
+       SELECT CASE (mat%matdef(5) )  !kinematic hardening type
+       CASE (1)                      !no hardening
+         h = 0d0
+       CASE (2)                      !linear hardening
+         h = mat%propp(6)
+       CASE (3)                      !non-linear (saturation - law) hardening
+         h = mat%propp(6) !+ ?
+       END SELECT
+       facto = facto* (1d0 - facto / (facto + aprim + h) )
+     END IF
+   END IF
+ ELSE IF (mtype == 6 )THEN
+   CALL rubber1d(pr(1),l,.TRUE.,mat%matdef(8),stres,facto)
+   stres = stres*sec%rprop(1)
+ !ELSE ??
+   !!multi-linear elastic
+   !i = 1
+   !DO
+   !  IF(matdb(matno)%mt%mat04%curv(i+1) >= ABS(stres))EXIT
+   !  i = i+2
+   !END DO
+   !facto = (matdb(matno)%mt%mat04%curv(i+1)-matdb(matno)%mt%mat04%curv(i-1))/&
+   !        (matdb(matno)%mt%mat04%curv(i)  -matdb(matno)%mt%mat04%curv(i-2))
+   !elasto-plastic
+ END IF
+ facto = facto*sec%rprop(1)/l0**3  !young*A/L0^3
+ nol0  = stres/l0                  !2nd Piola Kirchhoff * A0/L0
+
+ !to account for large deformations, modify Young Modulus
+ SELECT CASE (gtype)
+ CASE (-1:0) !2nd Piola-Kirchhoff
+   !do nothing
+ CASE (1)
+   jac = 1d0 + (1d0 - 2d0*mat%prope(2))*gv(3)/mat%prope(1)
+   facto = facto/l**4*(2d0/l**2-1d0)*jac         !logarithmic - Cauchy
+ CASE (2)
+   facto = facto/l**4*(l-2d0*log(l))             !logarithmic - Kirchhoff
+ CASE (3)
+   facto = facto/l**3                            !Engineering
+ END SELECT
+ facto = facto !- nol0
+ k = 0
+ DO n = 1,2       ! nnode=2
+   DO i = 1,ndime
+     DO m = n,2
+       IF(n == m) THEN
+         DO j = i,ndime
+           k = k+1
+           stiff(k) = dx(i)*dx(j)*facto
+           IF(i == j) stiff(k) = stiff(k) + nol0
+         END DO
+       ELSE
+         DO j = 1,ndime
+           k = k+1
+           stiff(k) = -dx(i)*dx(j)*facto
+           IF(i == j) stiff(k) = stiff(k) - nol0
+         END DO
+       END IF
+     END DO
+   END DO
+ END DO
+! k = 1
+! DO i=1,4
+!   WRITE(55,"(4f10.1)")stiff(k:k+4-i)
+!   k = k + 5-i
+! END DO
+ RETURN
+ END SUBROUTINE tanma2

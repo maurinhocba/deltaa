@@ -1,0 +1,467 @@
+ SUBROUTINE stif11(heade,coord,gstif,force,nhead,ntype,nstre,ngaus,sh,stabs,stint)
+
+ ! computes stiffness matrix for BEAM/SHELL element
+
+ USE npo_db, ONLY : iffix
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(IN) :: ntype, & !
+                                 nstre, &
+                                 ngaus
+ REAL (kind=8), INTENT(IN) :: coord(:,:), &   !present coordinates
+                              stabs,      &   !stabilization factor
+                              sh(2,2)
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:), & !global stiffness matrix
+                                  force(:), & !global force vector (prescribe displacements)
+                                  stint(:,:)  !
+ TYPE (ele11), POINTER :: heade               !pointer to first element
+ TYPE (nodei), POINTER :: nhead               !pointer to branching nodes
+
+ LOGICAL, PARAMETER :: logst = .TRUE. !large strain
+
+ !Local Variables
+ REAL (kind=8),PARAMETER :: twopi=6.283185307179586d0
+ INTEGER (kind=4) :: fixit(2), pp(5,2),  & !sides fixities
+                     ielem,      & ! element label
+                     isec,osec,  & !section numbers
+                     ij,i,j,k,l,g,nm, & !index
+                     !nucom,      & !number of components
+                     nlayr,      & !number of layers
+                     nvarl,      & !number of DOFs in the element
+                     mtype,      & !material type
+                     ns,         & !number of stresses
+                     nn            !number of nodes included
+ LOGICAL :: fix(2), & ! TRUE if side is clamped or symmetry line
+            newmt,  & !if a new material
+            natst,  & !use log strains
+            shell,  & !bending included
+            elast,  & !elastic/plastic material
+            plast,  & !plasticity active
+            siden(2),&! TRUE if the node is on a side
+            integ,  & !integrate trough the thickness
+            plas1,  & !elastic/plastic step
+            simpl     ! FALSE if one of the nodes is branched
+
+
+ REAL (kind=8) x(2,4),t(2),n(2),ro(2,2),y0(2),a0,li,           &
+               pff(2,2),    & !first fundamental form
+               curv(2,2),   & !curvatures
+               lb(3),       & !strains
+               cm(2,2),dmatx(4,4),  & !elasticity matrices
+               thick,thnew,zl,zl2, & !thickness
+               bmem(2,2,2),bfle(2,4,2),daux(10),aux,stres(2),dvolu,cs
+!              efpst, dmatx(4,4),aux1,stran(2),d(3,3),km,deatht
+
+ INTEGER (kind=4), ALLOCATABLE :: ln(:)
+ REAL (kind=8), ALLOCATABLE :: bm(:,:,:),stiff(:)     ! nvarl*(nvarl+1)/2
+ REAL (kind=8) :: & !lambd(7),    & !consistency parameters
+                  propi(13),   & !(nnn) material properties
+                  chi(12),     & !(12) Hill coeficients
+                  c(3)           !(4) Elasticity matrix
+
+! REAL (kind=8), POINTER :: volfr(:),   & !(NUCOM) components volumetric fraction
+!                           cmc(:,:),   & !(4,NUCOM) Elasticity matrix
+!                           rr(:,:),    & !(5,NUCOM) rotation matrix compon.
+!                           prop(:,:),  & !(nnn,NUCOM) material properties
+!                           yprop(:)      !(nnn) material properties
+
+ REAL (kind=8) :: thf(7),wei(7)  !Gauss points throught the thickness
+ TYPE (ele11), POINTER :: e      !pointer to an element
+ TYPE (section), POINTER :: sec  !pointer to a section data
+ TYPE (mater), POINTER :: mat    !pointer to a material data
+ TYPE (nodei), POINTER :: ni,nd  !pointer to branching nodes
+
+ INTERFACE
+   INCLUDE 'rubberps.h'
+ END INTERFACE
+
+ ! Branching nodes B-matrix was already computed at RESV11
+
+ !***  Compute Element Stiffness matrix for all elements
+
+ ns = nstre/2  !number of stress components
+ k = 1  !generate array of pointers to STINT
+ DO g=1,ngaus
+   pp(1,g) = k
+   pp(2,g) = pp(1,g)+ns-1
+   pp(3,g) = pp(2,g)+1
+   pp(4,g) = pp(2,g)+ns
+   pp(5,g) = pp(4,g)+1
+   k = pp(5,g) + 1
+ END DO
+
+ osec = -1
+ e => heade
+ ns = nstre/2
+ ielem = 0
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = ielem+1                   !element label
+   isec  = e%matno                   !associated material
+   newmt = osec /= isec              !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+     sec => psecs(isec)% p           !point to section SEC
+     mat => sec%mtbas                !point to material
+     osec = isec                     !keep present material
+     nlayr = sec%iprop(1)            !number of layers
+     shell = nlayr > 1               !membrane or shell
+     !nucom = sec%iprop(2)            !number of material components
+     mtype = mat%mtype               !type of base material
+     thick = sec%rprop(1)            ! original thickness
+     !min_tr= sec%rprop(2)            !Minimum Thickness ratio
+     !max_tr= sec%rprop(3)            !Maximum Thickness ratio
+     natst = logst .AND. mtype /= 6  !use log strains
+     elast = mat%matdef(3) == 1      !elastic
+     integ = .FALSE.                 !trougth the thickness integration
+     plast = .FALSE.                 !consider plasticity ?
+     CALL gaussq(nlayr,thf(1),wei(1)) !integration points through the thickness
+     thf(1:nlayr) = thf(1:nlayr)/2d0  !positions
+     wei(1:nlayr) = wei(1:nlayr)/2d0  !weights
+     SELECT CASE (mtype)
+     CASE  (1) !isotropic
+       !IF( .NOT.elast )THEN                ! if non-elastic
+       !  propi(1:4) = mat%propp(1:4)       ! isotropic hardening parameters
+       !  propi(5) = REAL( mat%matdef(4),8) ! isotropic hardening model
+       !  chi    = mat%propp(16:27)         ! hill coefficients
+       !  IF( mat%matdef(8) == 1  ) chi(1:6) = chi(7:12)  !associative
+       !  deatht = mat%propp(5)             !end of plasticity
+       !  plast = propi(1) > 0 ! .AND. death > ttime !consider plasticity ?
+       !END IF
+       IF( ntype == 1 )THEN   !beam
+         c(1) = mat%prope(1)                !Young modulus
+       ELSE                   !shell
+         c(1:3) = mat%prope(7:9)            ! plane stress elasticity matrix
+         !CALL dmat11(c(1),propi(1),chi(1),dummy,dummy,dummy,dummy,newmt)
+       END IF
+     CASE (5) !elastic orthotropic
+       ! plane stress elasticity matrix
+       c(1) = mat%props(1)
+       c(2) = mat%props(2)
+       c(3) = mat%props(5)
+       !IF( .NOT.elast )THEN                ! if non-elastic
+       !  propi(1:4) = mat%propp(1:4)       ! isotropic hardening parameters
+       !  propi(5) = REAL( mat%matdef(4),8) ! isotropic hardening model
+       !  chi    = mat%propp(16:27)         ! hill coefficients
+       !  IF( mat%matdef(8) == 1  ) chi(1:6) = chi(7:12)  !associative
+       !  deatht = mat%propp(5)             !end of plasticity
+       !  plast = propi(1) > 0 ! .AND. death > ttime !consider plasticity ?
+       !END IF
+     CASE (6)                     !hyperelastic isotropic
+       ! plane stress elasticity matrix
+       chi = mat%prope(7:18)      !elastic coefficients
+       elast = .TRUE.
+       plast = .FALSE.                        !consider plasticity ?
+       integ = .TRUE.
+     !CASE (9) !mixture theory material
+     !
+     !  IF( ASSOCIATED ( cmc ) )DEALLOCATE( cmc,prop,volfr,rr )
+     !  ALLOCATE( cmc(5,nucom),prop(12,nucom),volfr(nucom),rr(5,nucom))
+     !  volfr = mat%props(1:nucom)             !volume fractions
+     !  CALL vecasi(nucom*5,mat%props(2*nucom+1),cmc(1,1)) !elasticity matrix
+     !  CALL vecasi(nucom*5,mat%props(7*nucom+1),rr(1,1)) !rotation matrix
+     !  CALL vecasi(nucom*12,mat%propp(1),prop(1,1))      !plastic properties
+     !  !deatht = mat%??                       !end of plasticity
+     !  CALL dmat09(nucom,rr,volfr,newmt, cm=cmc,prop=prop)
+     !  plast = .TRUE.                         !consider plasticity ?
+     END SELECT
+     cs = sec%rprop(12)/12d0*stabs    !12=2*2*3 stabilization
+   END IF
+
+   ! gathers the initial coordinates and fixities
+
+   NULLIFY( ni,nd )    !nullify pointers at both end
+   fixit = 0           !Both sides exist and are smooth
+   nn = 0              !initializes number of nodes included
+   simpl = .TRUE.
+   DO j=1,nnode        !for each "node"
+     k = e%lnods(j)    !global number
+     SELECT CASE ( k )
+     !  branching node
+     CASE (:-1)         !find pointers to intersection node
+       simpl = .FALSE.
+       IF( j == 1 )THEN !first node
+         ni => nhead    !point to first node
+         DO i=1,-k-1    !loop
+           ni => ni%next
+         END DO
+         fixit(1) = 3       !branching node flag
+         nn = nn + ni%nn-1  !increase nodes include (exclude element nodes)
+       ELSE             !second node
+         nd => nhead    !point to first node
+         DO i=1,-k-1    !loop
+           nd => nd%next
+         END DO
+         fixit(2) = 3       !branching node flag
+         nn = nn + nd%nn-1  !increase nodes include (exclude element nodes)
+       END IF
+
+     CASE (0)          !border node set flags
+       IF( j == 1 )THEN    !first node
+         fix(1) = iffix(e%lnods(2)) /= 0  !1=fixed,-1=on a side
+         IF(iffix(e%lnods(2)) < 0) THEN  !node on a side
+           nn = nn + 2
+           fixit(1) = 2      !clamped
+           siden(1) = .TRUE.
+         ELSE
+           IF( fix(1) )THEN
+             fixit(1) = 2      !clamped
+           ELSE
+             fixit(1) = 1      !free
+           END IF
+         END IF
+       ELSE                  !second node
+         fix(2) = iffix(e%lnods(3)) /= 0
+         IF(iffix(e%lnods(3)) < 0) THEN  !node on a side
+           nn = nn + 2
+           fixit(2) =  2     !clamped
+           siden(2) = .TRUE.
+         ELSE
+           IF( fix(2) )THEN
+             fixit(2) =  2     !clamped
+           ELSE
+             fixit(2) =  1     !free
+           END IF
+         END IF
+       END IF
+
+     CASE (1: )        !inner node
+       x(:,j) = coord(:,k)    !get coordinates
+       nn = nn + 1     !increase number of nodes
+     END SELECT
+   END DO
+   ! get memory for conns, stiff matrix and B matrix
+   ALLOCATE (ln(nn),stiff(nn*(2*nn+1)),bm(2,nn,nstre))
+   nvarl = nn*2    !number of DOFs for this element
+
+   t  = (x(:,3) - x(:,2))/e%l0(2)/e%lambd(1)   !tangent vector
+   n  = (/ -t(2), t(1) /)                      !normal vector
+   !   generate connectivities
+   ln(1:2) = e%lnods(2:3)                      !compulsory conns
+   k = 2                                       !initializes
+   SELECT CASE(e%lnods(1))       !first node conns
+   CASE (:-1)               !branching node
+     DO i=1,ni%nn             !for each node
+       IF(ni%lnods(i) == ln(2))CYCLE   !skip second node
+       k = k + 1              !increase pointer
+       ln(k) = ni%lnods(i)    !add node
+     END DO
+   CASE (0)                 !end node
+     IF(siden(1))THEN       !if node on a side
+       a0 = e%cab(1,1)          !keep value
+       nm = -iffix(e%lnods(2))  !position of slave node
+       ln(k+1) = nndpd(2,nm) !lower node
+       ln(k+2) = nndpd(3,nm) !upper node
+       x(:,1) =  (/ coord(2,ln(k+2))-coord(2,ln(k+1)), &
+                    coord(1,ln(k+1))-coord(1,ln(k+2)) /)
+       li = DOT_PRODUCT(x(:,1),x(:,1))
+       x(:,1) = x(:,1)/li
+       e%cab(1,1) = ATAN2(x(2,1),x(1,1)) + a0       !a0 initial angle of solid
+       k = k + 2
+     END IF
+   CASE (1:)                !standard
+     k = k + 1                !increase pointer
+     ln(k) = e%lnods(1)       !add node
+   END SELECT
+
+   SELECT CASE(e%lnods(4))       !second node conns
+   CASE (:-1)               !branching node
+     DO i=1,nd%nn             !for each node
+       IF(nd%lnods(i) == ln(1))CYCLE   !skip first node
+       k = k + 1              !increase pointer
+       ln(k) = nd%lnods(i)    !add node
+     END DO
+   CASE (0)                 !end node
+     IF(siden(2))THEN       !if node on a side
+       a0 = e%cab(1,2)
+       nm = -iffix(e%lnods(3))  !position of slave node
+       ln(k+1) = nndpd(2,nm) !lower node
+       ln(k+2) = nndpd(3,nm) !upper node
+       x(:,4) = (/ coord(2,ln(k+2))-coord(2,ln(k+1)), &
+                   coord(1,ln(k+2))-coord(1,ln(k+1)) /)
+       li = DOT_PRODUCT(x(:,4),x(:,4))
+       x(:,4) = x(:,4)/li
+       e%cab(1,2) = ATAN2(x(2,4),x(1,4)) + a0       !a0 initial angle of solid
+       k = k + 2
+     END IF
+   CASE (1:)                !standard
+     k = k + 1                !increase pointer
+     ln(k) = e%lnods(4)       !add node
+   END SELECT
+   ! get initial radius for shells of revolution
+   IF( ntype == 3) ro(1:2,1:ngaus) = e%ro(1:2,1:ngaus)    !for axilsymmetric get initial R
+
+   stiff = 0d0  !initializes
+   DO g=1,ngaus             !for each Gauss point
+     dvolu = e%l0(2)/ngaus                        !Original length used (TLF)
+     IF( ntype == 3 ) dvolu = dvolu*ro(1,g)*twopi   !shell of revolution
+     bm = 0d0                                     !initializes B matrix
+     ! membrane part
+     CALL bmem11(ntype,e%l0(2),ro(1,g),e%lambd,t,bmem,sh(:,g))
+     bm(1:2,1:2,1:ns) = bmem(1:2,1:2,1:ns)
+     ! bending part (central nodes only)
+     CALL bfle11(ntype,fixit,e%l0,ro(1,g),e%lambd,t,n,x,e%cab,sh(:,g),bfle,g)
+     bm(1:2,1:2,ns+1:2*ns) = bfle(1:2,2:3,1:ns)
+
+     k = 2  !initializes
+     ! work on first node
+     SELECT CASE(e%lnods(1))
+     CASE (:-1)               !branching node
+       aux = sh(1,g)*2d0*e%lambd(1)/e%l0(2)      !shape(1)*2Ls/L0
+       bm(1:2,1,ns+1) = bm(1:2,1,ns+1) + ni%bb(:,0)*aux
+       DO i=1,ni%nn                              !for each node
+         IF(ni%lnods(i) == ln(2))THEN
+           bm(1:2,2,ns+1) = bm(1:2,2,ns+1) + ni%bb(:,i)*aux
+         ELSE
+           k = k + 1
+           bm(1:2,k,ns+1) = +ni%bb(:,i)*aux
+         END IF
+       END DO
+     CASE (0)                 !end node
+       IF(siden(1))THEN
+         y0 = e%cab(2,1)*x(:,1)*sh(1,g)
+         bm(1:2,k+1,ns+1) = bm(1:2,k+1,ns+1) + y0
+         bm(1:2,k+2,ns+1) = bm(1:2,k+2,ns+1) - y0
+         k = k + 2
+       END IF
+     CASE (1:)                !left node
+       k = k + 1
+       bm(1:2,k,ns+1) = bfle(1:2,1,1)
+     END SELECT
+
+     ! work on second node
+     SELECT CASE(e%lnods(4))
+     CASE (:-1)
+       aux = -sh(2,g)*2d0*e%lambd(1)/e%l0(2)      !-shape(2)*2Ls/L0
+       bm(1:2,2,ns+1) = bm(1:2,2,ns+1) + nd%bb(:,0)*aux
+       DO i=1,nd%nn                              !for each node
+         IF(nd%lnods(i) == ln(1))THEN
+           bm(1:2,1,ns+1) = bm(1:2,1,ns+1) + nd%bb(:,i)*aux
+         ELSE
+           k = k + 1
+           bm(1:2,k,ns+1) = +nd%bb(:,i)*aux
+         END IF
+       END DO
+     CASE (0)                 !end node
+       IF(siden(2))THEN
+         y0 = e%cab(2,2)*x(:,4)*sh(2,g)
+         bm(1:2,k+1,ns+1) = bm(1:2,k+1,ns+1) - y0
+         bm(1:2,k+2,ns+1) = bm(1:2,k+2,ns+1) + y0
+         k = k + 2
+       END IF
+     CASE (1:)   !rigth node
+       k = k + 1
+       bm(1:2,k,ns+1) = bfle(1:2,4,1)
+     END SELECT
+
+     !IF( mtype == 1 )THEN
+     !  IF( plast )THEN
+     !    lambd(1:nlayr) = e%gausv(8,1:nlayr)           !consistency parameter
+     !    plas1 = ANY( lambd /= 0d0 )
+     !  ELSE
+     !    plas1 = .FALSE.
+     !  END IF
+     !END IF
+
+     IF( integ )THEN
+        CALL stra11(ntype,ngaus,x,ni,nd,fix,e%lnods,   &       !compute stretchings and curvatures
+               e%l0,e%cab,ro,e%lambd,pff,curv,t,n,sh)
+       ! Integrate throught the thickness Elasto-plastic consistent matrix
+       thnew = thick*e%lambd(2)           !thickness at new configuration
+       dmatx = 0d0                         ! Initializes D matrix
+       DO l=1,nlayr                        ! for each layer
+         ! compute layer constitutive matrix (tangent algorithmic)
+         zl = thf(l)*thnew                     !Z coordinate
+         zl2 = zl*zl                       ! Z coord squared
+         lb(1:ns) = pff(1:ns,g)+curv(1:ns,g)*zl  !layer U^2
+         SELECT CASE (mtype)
+         !CASE (1) ! for an isotropic one component material
+         !   IF( plas1 )THEN
+         !     efpst = e%gausv(4,l) + lambd(l)    !Total Eff. plastic strain
+         !     stres(1:3) = e%gausv(9:11,l)         !stresses (Hencky or 2PK)
+         !   ELSE
+         !     efpst = 0d0
+         !   END IF
+         !   CALL dmat11(dummy,dummy,dummy,stres(1),lambd(l),efpst,d(1,1),.FALSE.)
+         !CASE (5) ! Orthotropic material
+
+         CASE ( 6 )
+           lb(1) = SQRT(lb(1))
+           IF( ntype == 1 )THEN
+             CALL rubber1d(chi(1),lb(1),.TRUE.,mat%matdef(8),stres(1),cm(1,1))
+           ELSE
+             lb(2) = SQRT(lb(2))
+             lb(3) = 1d0/(lb(1)*lb(2))
+             CALL rubberps(chi,lb,mat%matdef(8),stres,mat=cm)
+           END IF
+         !CASE (9)     ! mixture theory
+         !  CALL dmat09(nucom,rr,volfr,newmt, gausv=e%gausv(:,l),d=d)
+
+         END SELECT
+
+         cm = cm*wei(l)
+         DO i=1,ns
+           DO j=i,ns
+             dmatx(i,j)       = dmatx(i   ,j)    + cm(i,j)
+             dmatx(i,j+ns)    = dmatx(i   ,j+ns) + cm(i,j)*zl
+             dmatx(i+ns,j+ns) = dmatx(i+ns,j+ns) + cm(i,j)*zl2
+           END DO
+         END DO
+       END DO
+
+       IF(ns == 2) dmatx(2,3) = dmatx(1,4)
+
+       aux = dvolu*thick
+       k = 0
+       DO i=1,2*ns
+         DO j=i,2*ns
+           k = k+1
+           daux(k) = aux*dmatx(i,j)
+         END DO
+       END DO
+     ELSE
+       IF( ntype == 1 )THEN !beam
+         daux(1:3) = (/ sec%rprop(11), 0d0, sec%rprop(12) /)*dvolu
+       ELSE !shell
+         daux(1:10) = (/ &
+            sec%rprop(21), sec%rprop(22),      0d0     ,     0d0,       &
+                           sec%rprop(21),      0d0     ,     0d0,       &
+                                          sec%rprop(23), sec%rprop(24), &
+                                                         sec%rprop(23) /)*dvolu
+       END IF
+     END IF
+
+     CALL btdbpr(bm(1,1,1),daux(1),stiff(1),nvarl,nstre)
+     stres(1:ns) = stint(pp(1,g):pp(2,g),ielem)*dvolu
+     ! geometric stiffness due to membrane part
+     CALL kgeo11(nvarl,ntype,sh(:,g),x(1:2,2:3),e%l0(2),ro(1,g),t,stres(1:ns),stiff)
+   END DO
+
+   IF( ngaus == 1 .AND. cs > 0d0 .AND. simpl )THEN
+     !one gauss point + stabilization
+     aux = cs*dvolu   !stabilization moment
+     CALL bfle11(ntype,fixit,e%l0,ro(1,g),e%lambd,t,n,x,e%cab,sh(:,g),bfle,0)
+     bm(1:2,1:2,1) = bfle(1:2,2:3,1)
+     k = 2
+     IF(e%lnods(1) > 0 ) THEN
+       k = k + 1
+       bm(1:2,k,1) = bfle(1:2,1,1)
+     END IF
+     IF(e%lnods(4) > 0 )THEN
+       k = k + 1
+       bm(1:2,k,1) = bfle(1:2,4,1)
+     END IF
+     CALL btdbpr(bm(1,1,1),aux,stiff(1),nvarl,1)
+   END IF
+
+
+     ! assemble stiffness matrix and force vector
+   CALL stiaux(nn,ln(1),nvarl,2,stiff(1),force(1),gstif(1) )
+   DEALLOCATE (ln,bm,stiff)
+   IF( siden(1) ) e%cab(1,1) = a0     !restore initial distortion
+   IF( siden(2) ) e%cab(1,2) = a0     !restore initial distortion
+   e => e%next
+ END DO
+
+ RETURN
+
+ END SUBROUTINE stif11

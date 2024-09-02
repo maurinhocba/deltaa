@@ -1,0 +1,71 @@
+ SUBROUTINE gaus03(coord,eule0,istop,heade,gauss,angdf,locax,quad,zigzag)
+ !********************************************************************
+ !
+ !*** evaluates gauss points constants for shell element 7
+ !    valid only for 6-noded triangular  element
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(IN) :: locax
+ INTEGER (kind=4), INTENT(OUT) :: istop
+ REAL (kind=8), INTENT(IN) :: coord(:,:), & !initial coordinates
+                              eule0(:,:), & !original nodal system
+                              angdf         !default angle X_1 - Ort_1
+ TYPE (ele03), POINTER :: heade   !pointer to first element in the set
+ LOGICAL, INTENT (IN) :: quad         !TRUE if quadratic membrane
+ LOGICAL, INTENT (IN) :: zigzag       !TRUE if additional in-plane displacement
+ LOGICAL, INTENT (IN OUT) :: gauss    !TRUE if initial constant exists
+
+ INTEGER (kind=4) :: i,m,ni
+ REAL    (kind=8) ang,x(3,6),t(3,3),rm(9),lb(3,2,3)
+ TYPE (ele03), POINTER :: e
+ REAL (kind=8),PARAMETER ::  factor = 1.74532925199433d-02  !pi/180
+
+
+ IF( .NOT.gauss )THEN
+
+   e => heade       !point to first element
+   DO               !loop over the elements in the set
+     IF (.NOT.ASSOCIATED (e) ) EXIT  !if all element processed, exit
+     ! gathers the initial coordinates and directors
+     x(:,1:3) = coord(:,e%lnods(1:3))
+     DO i=1,3
+       CALL inrotm(eule0(:,e%lnods(i+3)),rm(:))
+       t(:,i) = rm(7:9)
+       IF( zigzag)THEN
+          CALL inrotm(eule0(:,e%lnods(i)),rm(:))
+          lb(:,1,i) =  rm(1:3)
+          lb(:,2,i) =  rm(4:6)
+       END IF
+     END DO
+     ang = (e%angle+angdf)*factor
+     IF(quad)THEN
+       DO m =1,3                       !for the side nodes in the patch
+         i = m+3                       !associated node
+         ni = e%lnods(i+3)               !node number
+         IF(ni > 0) THEN
+           x(1:3,i) = coord(1:3,ni)    !get original coordinates of adjacent node
+           e%mems(m) = .TRUE.               !side element exists
+         ELSE
+           e%mems(m) = .FALSE.              !side element does not exist
+           x(1:3,i) = 0d0            !null values (unnecessary perhaps)
+         END IF
+       END DO
+     END IF
+    !
+     CALL setg03(x,t,e%dvolu,e%cartd,e%jacin,e%stra0,e%gamm0,e%ambda,ang,locax,quad,e%mems,e%cd)
+     IF(e%dvolu <= 0) THEN
+       WRITE(lures,"(' Negative or null Jacobian at shell elmnt',         &
+       & i8,/,' Jacobian =',e13.4)",ERR=9999)     &
+       & e%numel,e%dvolu
+       istop = 1
+     END IF
+     IF( ASSOCIATED(e%nangl)) CALL comp_ang03(x,t,lb,e%nangl,ang,locax,e%jas)
+     e => e%next
+   END DO
+   gauss = .TRUE.
+ END IF
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE gaus03

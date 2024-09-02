@@ -1,0 +1,78 @@
+ SUBROUTINE expo12 ( elset, ascii, itask )
+ !***********************************************************************
+ !
+ !*** export an element set
+ !
+ !***********************************************************************
+ USE npo_db, ONLY : label
+ IMPLICIT NONE
+
+ !     Arguments
+ INTEGER (kind=4) :: itask
+ LOGICAL :: ascii
+ TYPE (ele12_set), POINTER  :: elset      !pointer to first element
+
+ !     Local Variables
+ INTEGER (kind=4) i,j,ielem,nvare,nelem,secn,olds,nnb
+ LOGICAL :: inter
+ TYPE(section), POINTER :: sec
+ CHARACTER(len=6) :: quad
+
+
+ TYPE (ele12), POINTER :: e
+
+ nelem = elset%nelem
+ nnb = elset%nnb
+
+ IF( ascii )THEN   !ASCII file
+   IF( itask == 0 )THEN !write connectivities
+
+     quad = '' ; small = ''
+
+     WRITE (10,"('  ELS_NAME:',a,'  ELM_TYPE: SOLSH  NELEM:',i7,/ &
+    & 10x,'NNODE =',i3,'NREQS = 0 , NGAUS =',i2,' ANGLE: ',e12.4, ' \',/ &
+    & 10x,4(a6))",ERR=9999)  &
+    & TRIM(elset%sname),nelem,nnb,ngaus,elset%angdf,quad
+     e => elset%head
+     olds = -1
+     DO ielem=1,nelem
+       IF( e%matno /= olds )THEN
+         olds = e%matno
+         sec => psecs(olds)%p
+         secn = sec%secno
+       END IF
+       WRITE(10,"(i7,i3,3x,6i7,e12.4)",ERR=9999) e%numel,secn, &
+                 label(e%lnods(1:nnb)),e%angle
+       e => e%next
+     END DO
+
+   ELSE            !write internal variables
+   END IF
+
+ ELSE  ! binary file
+
+   inter = itask == 1
+   WRITE (46,ERR=9999) 12,elset%sname    !only elm_type is necessary
+   WRITE (46,ERR=9999) nelem,elset%nnb,ngaus,elset%angdf,elset%quad, &
+                       elset%locax,elset%zigzag
+
+   e => elset%head
+   olds = -1
+   DO ielem=1,nelem
+     IF( e%matno /= olds )THEN
+       olds = e%matno
+       sec => psecs(olds)%p
+       secn = sec%secno
+     END IF
+     WRITE(46,ERR=9999) e%numel,secn,label(e%lnods(1:nnb)),e%angle
+     IF( inter )THEN
+       WRITE(46,ERR=9999) e%alpha
+     END IF
+     e => e%next
+   END DO
+
+ END IF
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE expo12

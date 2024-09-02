@@ -1,0 +1,48 @@
+ SUBROUTINE actu04(heade,ngaus)
+ ! updates internal variables (last converged = present)
+ ! not used presently as only elastic materials are considrered
+ IMPLICIT NONE
+ ! dummy arguments
+ TYPE(ele04), POINTER :: heade
+ INTEGER (kind=4) :: ngaus
+ ! local variables
+ INTEGER (kind=4) :: n,m,isec,j,nucom,osec,g
+ INTEGER (kind=4) :: nvar,  nstre
+ REAL(kind=8) :: defps
+ LOGICAL :: newmt,found
+ TYPE(ele04), POINTER :: e
+ TYPE (section), POINTER :: sec    !pointer to a section data
+
+ osec = -1          !initializes
+ e => heade         !point to first element
+ DO
+   IF( .NOT.ASSOCIATED(e) ) EXIT
+   !IF( SIZE(e%gausv,1) > 1 ) THEN   !Yield must be > zero
+   IF( ASSOCIATED(e%gausv)  ) THEN   !Yield must be > zero
+     isec = e%matno                   !associated material
+     newmt = osec /= isec             !same material than previous ?
+     IF(newmt)THEN                     !if new material, get properties
+       CALL sect_search(isec,found,sec)
+       osec = isec                    !keep present material
+       nucom = sec%iprop(2)           !number of material components
+       nvar = nvare/2/nucom           !number of internal variables per component
+       nstre = nvar - 1               !number of stress components
+     END IF
+     DO g=1,ngaus
+       m = 1   !pointer to last converged
+       DO j=1,nucom
+         n = m+nvar    !position of current values
+         defps = e%gausv(n+nstre,g)  !pointer to increment in plastic strain
+         IF(defps > 0)THEN
+           e%gausv(m:m+nstre-1,g) = e%gausv(n:n+nstre-1,g) !current into last converged
+           e%gausv(m+nstre,g) = e%gausv(m+nstre,g) + defps  !eff. pl. strain
+         END IF
+         m = m+nvare    !position of last converged of next component in layer
+       END DO
+     END DO
+   END IF
+   e => e%next    !point to next element
+ END DO
+
+ RETURN
+ END SUBROUTINE actu04

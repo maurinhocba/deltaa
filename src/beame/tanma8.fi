@@ -1,0 +1,75 @@
+ SUBROUTINE tanma8(nvarl,ndofe,ngaus,nstre,nnode,il,     &
+                   rprop,weigh,shape,deriv,              &
+                   jac,stra0,stran,stres,epdef,sedef,    &
+                   bmatx,x,lbd,stiff,llbd,isotro,plast )
+ !***********************************************************************
+ !
+ !****this routine compute the stiffness matrix for beame (elem.8)
+ !
+ !***********************************************************************
+ IMPLICIT NONE
+    !***  routine parameters
+ INTEGER (kind=4) nvarl,ndofe,ngaus,nstre,nnode,il
+ REAL (kind=8) rprop(:),shape(nnode,ngaus),deriv(nnode,ngaus),weigh(ngaus),   &
+               jac(ngaus),stra0(nstre,ngaus),stran(nstre,ngaus),stres(nstre,ngaus),  &
+               epdef(ngaus),sedef(ngaus),x(3,nnode),lbd(3,3,nnode),llbd(:,:,:)
+ LOGICAL :: isotro,plast
+ REAL (kind=8), INTENT(OUT) :: stiff(:),bmatx(:,:,:)
+
+    !***  local variables
+ INTEGER (kind=4) i,j,n,g,k
+ REAL    (kind=8) strd(nstre),facto,daux(21),lb(3,3,nnode),auxm(3,3),t(3,nnode),tg(3,ngaus)
+
+ REAL (kind=8),SAVE :: h(3) = (/0d0,0d0,0d0/)
+
+ !     compute the local cartesian system
+ IF(il == 0) THEN  !same systems
+   lb = lbd             !local system = global system
+ ELSE              !relative systems
+   DO n=1,nnode    !for each node
+     k = MIN(il,n)
+     lb(1:3,1:3,n) = MATMUL(lbd(1:3,1:3,n),llbd(1:3,1:3,k))     !element nodal local systems
+   END DO
+ END IF
+
+ ! compute lambda matrix at Gauss points
+ t(1:3,1) = 0.0D0 !initializes first node rotation vector
+ DO n=2,nnode !for each other node
+   auxm = MATMUL(TRANSPOSE(lb(:,:,1)),lb(:,:,n)) !relative matrix rotation respecto to 1st node
+   CALL cuate8(auxm(1,1),t(1,n)) !compute rotation vector at other nodes relatives to 1st node
+ END DO
+ CALL proma1(tg,t,shape,3,ngaus,nnode) !compute rotation vector at Gauss point
+ DO g=1,ngaus
+   CALL expot8(tg(1,g),auxm(1,1))         !compute relative rotation matrix
+   lbd(:,:,g) = MATMUL(lb(:,:,1),auxm)    !compute local system at Gauss point
+ END DO
+
+ DO g=1,ngaus
+    !       material matrix
+   facto = jac(g)*weigh(g)                 !dvolu
+   k = 10
+   n = 0
+   DO i=1,nstre
+     n = n + 1
+     daux(n) = rprop(4+i)*facto  !upper triangle D-matrix times GP weight
+     IF( .NOT. isotro )THEN
+       DO j=i+1,nstre
+         n = n+1
+         k = k+1
+         daux(n) = rprop(k)*facto
+       END DO
+     ELSE
+       n = n + nstre - i
+     END IF
+     strd(i) = stres(i,g)*facto  !stresses for geometric matrix
+   END DO
+
+   !                  b matrix
+   CALL bmatx8(nstre,nnode,shape(:,g),deriv(:,g),jac(g),stran(:,g),lbd(:,:,g),bmatx,llbd,il)
+    !                  sums the material contribution
+   CALL btdbpr(bmatx(1,1,1),daux(1),stiff(1),nvarl,nstre)
+    !                  geometric part
+   CALL kgeom8(nnode,nvarl,deriv(:,g),shape(:,g),jac(g),lbd(:,:,g),stran(:,g),strd,stiff,llbd,il)
+ END DO
+ RETURN
+ END SUBROUTINE tanma8

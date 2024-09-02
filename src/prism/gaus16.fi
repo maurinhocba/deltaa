@@ -1,0 +1,205 @@
+SUBROUTINE gaus16(istop,nnode,ngaus,locax,nassp,quad,shell,bbar,bezier,heade, &
+                  angdf,coord,gpa,pag,nfnda,amat)
+!-------------------------------------------------------------------
+!--- evaluates gauss points constants for solid element 16 PRISM
+!--------------------------------------------------------------------
+IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(OUT) :: istop
+ INTEGER (kind=4), INTENT(IN) :: nnode,ngaus,locax,nassp
+ REAL (kind=8), INTENT(IN) :: coord(:,:),  & !initial coordinates
+                              angdf(:),    & !default angles Gl_X - Ort_Axes
+                              amat(:,:),   & !AT matrix
+                              gpa(:,:)       !Gauss Points positions for ANS transverse shear
+ REAL (kind=8), INTENT(OUT) ::  nfnda(:,:,:),  &  !Nodal Functions Natural Derivatives at ANS transverse shear
+                                pag(:,:,:)        !PA matrix product at Gauss points
+ TYPE (ele16), POINTER :: heade   !pointer to first element in the set
+ LOGICAL, INTENT (IN) :: quad,     &  !TRUE for quadratic version
+                         shell,    &  !TRUE for assumed transverse shear
+                         bbar,     &  !TRUE for averaged volumen
+                         bezier       !TRUE for bezier polynomials
+
+ INTEGER (kind=4) :: ngaud,ngaup   !gauss point in zeta direction & in-plane
+ INTEGER (kind=4) i,k,ielem,j
+ REAL (kind=8) :: a,b,c,cd(nnode,3),dvol,deriv(nnode,3,ngaus),weigp(3),posgp(3),  &
+                  gpw(ngaus), nada(nnode),dern(nnode,3,nassp,2),p(2,nassp)
+ REAL (kind=8) :: ang(3),factor,rm(3,3),lb(3,3),tc(2,4),wp(4)
+ REAL (kind=8), ALLOCATABLE :: x(:,:),sh(:,:)
+ REAL (kind=8), PARAMETER :: gpz(2)   =  (/ -1.D0, 1.D0  /)  ! external surfaces
+! REAL (kind=8), PARAMETER :: gpz(2)   =  (/ -0.577350269169626D+00, 0.577350269169626D+00 /) ! standard Gauss points
+ TYPE (ele16), POINTER :: e           !pointer to an element
+ LOGICAL :: use_gang, use_ang         !global non-zero angles,  a local system exist
+ LOGICAL :: sides(3),order             !side element existence for quad approach
+ INTERFACE
+   INCLUDE 'shape4.h'
+ END INTERFACE
+
+
+ !     ---------------------------------------------------------
+ order = nnode == 12   !modifies the BPRISM order
+ IF( MOD(ngaus,2) == 0 ) THEN
+   ngaud = 2
+   ngaup = ngaus/ngaud
+ ELSE
+   ngaud = 3
+   ngaup = (ngaus+2)/ngaud
+ END IF
+ CALL gaussq (ngaud ,posgp ,weigp ) ! get standard  gauss points in local coordinates and weigths
+ IF( quad .OR. shell )THEN
+   CALL gaussq (ngaud ,posgp ,weigp ) ! get standard  gauss points in local coordinates and weigths
+   ALLOCATE( sh(2,ngaud) )  !to interpolate ANS membrane/shear strains to ttt integration points (QUAD)
+   DO k=1,ngaud
+     sh(:,k) =(/ (1d0+posgp(k)/gpz(1))/2d0, (1d0+posgp(k)/gpz(2))/2d0 /)
+   END DO
+ END IF
+ SELECT CASE (ngaup)
+ CASE (1)
+   tc(1:2,1) = 1d0/3d0
+   wp(1) = 0.5D0
+ CASE (3)
+   !   mid-side Gauss points
+   !a=0.5D0
+   !b=0.0D0
+   !tc(1:2,1:3) = RESHAPE( (/ a,b, a,a, b,a /),(/2,3/))    !in-plane gauss points (xita-eta)
+   !wp(1:3) = 0.166666666666667d0          !1/6
+   !   interior Gauss points
+   a=0.666666666666667d0          !2/3
+   b=0.166666666666667d0          !1/6
+   tc(1:2,1:3) = RESHAPE( (/ b,b, a,b, b,a /),(/2,3/))    !in-plane gauss points (xita-eta)
+   wp(1:3) = b
+ CASE (4)
+   a=0.333333333333333d0
+   b=0.600000000000000d0
+   c=0.200000000000000d0
+   tc(1:2,1:4) = RESHAPE( (/ a,a, b,c, c,b, c,c /),(/2,4/))    !in-plane gauss points (xita-eta)
+   wp(1) =  -27d0/96d0
+   wp(2:4) = 25d0/96d0
+ END SELECT
+ k = 0                !initializes counter
+ DO i=1,ngaud           !zeta direction
+   DO j=1,ngaup           !in plane
+     k = k+1                !updates counter
+     IF( ngaus == 7 .AND. k == 4 )THEN
+       CALL shape4(nnode,nada,deriv(:,:,k),1d0/3d0,1d0/3d0,posgp(i),bezier,order)
+       gpw(k) = weigp(i)/2d0
+       EXIT
+     ELSE
+       CALL shape4(nnode,nada,deriv(:,:,k),tc(1,j),tc(2,j),posgp(i),bezier,order)
+       gpw(k) = wp(j)*weigp(i)
+     END IF
+   END DO
+ END DO
+
+ IF( shell )THEN
+   SELECT CASE (nassp)
+   CASE (3)
+     a=0.333333333333333d0          !1/3
+     b=0.666666666666667d0          !2/3
+     pag(1,:,1) = (/  b, -a, +a /)
+     pag(2,:,1) = (/  a,  a, +b /)
+   CASE ( 6 )
+     DO i=1,ngaup    !in-plane Gauss points
+       p(1,:) = (/ 1d0, tc(1,i),tc(2,i), 0d0,     0d0,    0d0 /)
+       p(2,:) = (/ 0d0,     0d0,    0d0, 1d0, tc(1,i),tc(2,i) /)
+       pag(:,:,i) = MATMUL(p,amat)
+     END DO
+   CASE ( 8 )
+     DO i=1,ngaup    !in-plane Gauss points
+       p(1,:) = (/ 1d0, tc(1,i),tc(2,i), tc(1,i)*tc(2,i), 0d0,     0d0,    0d0,-tc(2,i)*tc(2,i) /)
+       p(2,:) = (/ 0d0,     0d0,    0d0,-tc(1,i)*tc(1,i), 1d0, tc(1,i),tc(2,i), tc(1,i)*tc(2,i) /)
+       pag(:,:,i) = MATMUL(p,amat)
+     END DO
+   END SELECT
+   DO i=1,2  !two points across the thickness for transverse shear evaluation
+     DO j=1,nassp
+       CALL shape4(nnode,nada,dern(:,:,j,i),gpa(1,j),gpa(2,j),gpz(i),bezier,order)
+       SELECT CASE (nassp)
+       CASE (3)
+         SELECT CASE(j)
+         CASE (1)
+           nfnda(:,j,i) = +dern(:,1,j,i)
+         CASE (2)
+           nfnda(:,j,i) = (-dern(:,1,j,i)+dern(:,2,j,i))!/SQRT(2D0) (see CMAME paper)
+         CASE (3)
+           nfnda(:,j,i) = +dern(:,2,j,i)
+         END SELECT
+       CASE (6,8)
+         SELECT CASE(j)
+         CASE (1:2,7)
+           nfnda(:,j,i) = +dern(:,1,j,i)
+         CASE (3:4)
+           nfnda(:,j,i) = (-dern(:,1,j,i)+dern(:,2,j,i))/SQRT(2D0)
+         CASE (5:6,8)
+           nfnda(:,j,i) = +dern(:,2,j,i)
+         END SELECT
+       END SELECT
+     END DO
+   END DO
+ END IF
+
+ !  get memory for nodal coordinates
+ IF( quad ) THEN              ! for quad approach
+   ALLOCATE(x(3,12))      !extended patch
+ ELSE                         !
+   ALLOCATE(x(3,nnode))   !standard element
+ END IF
+
+ !     ---------------------------------------------------------
+
+ factor = ATAN(1d0)/45d0         !pi/180
+ ang = angdf*factor              !default angle in radians
+ use_gang = ANY(angdf /= 0d0)    !only if not all angles are null
+ CALL inrotm(ang,rm(1,1))        !compute global relative rotation matrix
+
+ e => heade       !point to first element
+ DO               !loop over the elements in the set
+   IF (.NOT.ASSOCIATED (e) ) EXIT  !if all element processed, exit
+
+   x(:,1:nnode) = coord(:,e%lnods(1:nnode))     !get original coordinates (element nodes)
+   IF( quad )THEN   !for quadratic approach, get extra nodes
+     DO i=1,3        !get original coordinates (extra patch nodes)
+       sides(i) = ( e%lnods(i+6) /= 0 )         !side element exist
+       IF( sides(i) )THEN
+         x(:,i+6:i+9:3) = coord(:,e%lnods(i+6:i+9:3))
+       ELSE
+         x(:,i+6:i+9:3) = 0d0                   !may be unnecessary
+       END IF
+     END DO
+   END IF
+
+   IF( ANY(e%angle /= 0d0))THEN          !IF local angle is non zero
+     ang = e%angle*factor                  ! in radians
+     CALL inrotm(ang,lb(1,1))                !local relative rotation matriz
+     lb = MATMUL(rm,lb)                         ! rotation matrix
+     use_ang = .TRUE.
+   ELSE
+     lb = rm                                 !use global matrix
+     use_ang = use_gang
+   END IF
+
+   IF( locax /= 0 )CALL lcsy16(lb,x,locax,use_ang,nnode)   !compute local shell system
+   ielem = e%numel
+   ! compute element local systems, nodal functions and derivatives
+   IF( quad .OR. shell ) THEN
+     CALL jacob16(quad,shell,nnode,ngaus,nassp,deriv,dern,e%cartd,e%dvol,x,ielem,istop, &
+                  e%cdq,lb,sides,e%nfdas,e%jacin)
+     DO k=1,ngaus
+       e%dvol(k)= e%dvol(k)*gpw(k)
+     END DO
+   ELSE       !standard
+     DO k=1,ngaus
+       CALL jacob5(cd(1,1),deriv(1,1,k),dvol,x(1,1),nnode,ielem,istop)
+       e%cartd(1:nnode,:,k) = MATMUL(cd,lb)
+       e%dvol(k)= dvol*gpw(k)
+     END DO
+    END IF
+    CALL stra16(quad,shell,sides,ngaus,nnode,nassp,x,e%cartd,e%cdq,e%nfdas,nfnda, &
+                   pag,sh,e%jacin,e%stra0)
+
+    e%stint = 0d0            !Initializes stresses
+
+   e => e%next          !point to next element
+ END DO
+
+ RETURN
+ END SUBROUTINE gaus16

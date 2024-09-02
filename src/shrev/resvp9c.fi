@@ -1,0 +1,100 @@
+ SUBROUTINE resvp9c(nelem,ngaus,heade,coord,euler, &
+                    coora,locsy,resid,posgp)
+ !********************************************************************
+ !
+ !***   evaluation of integral (b)**t*(sigma) for beam elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(IN) :: nelem,ngaus
+ REAL (kind=8), INTENT(IN) :: coord(:,:),euler(:,:),  &
+                              coora(:,:),locsy(:,:),  &
+                              posgp(:)
+ REAL (kind=8), INTENT(OUT) :: resid(:,:)
+ TYPE(ele09), POINTER :: heade
+
+
+ INTEGER (kind=4) ielem,l,isec,nd,osec,i
+ REAL (kind=8) f(6),fg(6),dmatx(5),dm, &
+               ka, k11,k12,k22,k2, s(6,6),r(6,6),ca,sa,u(6), &
+               x1,x2,x3,lg,u1,u2,v1,v2,b1,b2
+
+
+ TYPE(ele09), POINTER :: e
+ TYPE(section), POINTER :: sec
+
+
+ osec = -1
+ nd = 11
+ !***  loop over all the elements
+ e => heade
+ DO ielem=1,nelem
+   isec  = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     dmatx = sec%rprop(nd:nd+4)
+     osec  = isec
+   END IF
+
+   !   gathers the displacements
+   u(1:2)= coora(:,e%lnods(1)) - coord(:,e%lnods(1))
+   u(3)  = locsy(1,e%lnods(1)) - euler(1,e%lnods(1))
+   u(4:5)= coora(:,e%lnods(2)) - coord(:,e%lnods(2))
+   u(6)  = locsy(1,e%lnods(2)) - euler(1,e%lnods(2))
+   !  compute stiffness matrix in local coordinates
+   ka = dmatx(1)/e%jac(1)
+   k2 = 2d0*dmatx(2)/e%jac(1)
+   k22= 2d0*k2
+   k12= 3d0*k2/e%jac(1)
+   k11= 2d0*k12/e%jac(1)
+
+   s = RESHAPE((/ ka, 0d0, 0d0, -ka, 0d0, 0d0, &
+                 0d0, k11, k12, 0d0,-k11, k12, &
+                 0d0, k12, k22, 0d0,-k12, k2 , &
+                 -ka, 0d0, 0d0,  ka, 0d0, 0d0, &
+                 0d0,-k11,-k12, 0d0, k11,-k12, &
+                 0d0, k12, k2 , 0d0,-k12, k22 /),(/6,6/))
+
+   ! compute rotation matrix
+   ca = COS(e%jac(2))
+   sa = SIN(e%jac(2))
+   r = RESHAPE((/  ca,  sa, 0d0, 0d0, 0d0, 0d0, &
+                  -sa,  ca, 0d0, 0d0, 0d0, 0d0, &
+                  0d0, 0d0, 1d0, 0d0, 0d0, 0d0, &
+                  0d0, 0d0, 0d0,  ca,  sa, 0d0, &
+                  0d0, 0d0, 0d0, -sa,  ca, 0d0, &
+                  0d0, 0d0, 0d0, 0d0, 0d0, 1d0 /),(/6,6/))
+
+   u  = MATMUL(TRANSPOSE(r),u)  !u in local coordinates
+   f  = MATMUL(s,u)             !generalized forces in local coordinates
+   fg = MATMUL(r,f)             !generalized forces in global coordinates
+
+   l = e%lnods(1)
+   resid(1:3,l) = resid(1:3,l) + fg(1:3)
+   l = e%lnods(2)
+   resid(1:3,l) = resid(1:3,l) + fg(4:6)
+
+   f = f
+   dm = f(6)+f(3)
+   lg = e%jac(1)
+   u1 = u(1)
+   v1 = u(2)
+   b1 = u(3)*lg
+   u2 = u(4)-u1
+   v2 = u(5)
+   b2 = u(6)*lg
+   DO i=1,ngaus
+     x1 = posgp(i)
+     x2 = x1*x1
+     x3 = x1*x2
+     e%stres(1,i) = f(4) + e%stra0(1,i)
+     e%stres(2,i) = f(5) + e%stra0(2,i)
+     e%stres(3,i) = - f(3) + dm *posgp(i) + e%stra0(3,i)
+     e%stres(4,i) = u1 + u2*x1
+     e%stres(5,i) = v1*(2*x3-3*x2+1)+ b1*(x3-2*x2+x1)+ v2*(-2*x3+3*x2)+ b2*(x3-x2)
+   END DO
+   e => e%next
+ END DO
+ RETURN
+ END SUBROUTINE resvp9c

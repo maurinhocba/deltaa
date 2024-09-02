@@ -1,0 +1,63 @@
+ SUBROUTINE stiff8(ndime,nelem,nnode,ngaus,axesc,shape,weigh,deriv,   &
+                  heade,coora,euler,gstif,force)
+ !********************************************************************
+ !
+ !***   evaluation of tangent stiffness matrix for shell/beam elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ !***  routine parameters
+ INTEGER (kind=4), INTENT(IN) :: ndime,nelem,nnode,ngaus,axesc
+ REAL (kind=8), INTENT(IN) :: coora(:,:), euler(:,:), &
+                              weigh(:),deriv(:,:),shape(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:),force(:)
+ TYPE (ele08), POINTER :: heade
+ !***  local variables
+ INTEGER (kind=4), PARAMETER :: ndofe = 6, nstre = 6
+ TYPE (ele08), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL   isotro,plast
+
+ INTEGER (kind=4) ielem,nvarl,msize,isec,osec,n,l
+
+ REAL (kind=8) stiff(171),bmatx(ndofe,nnode,nstre), &
+               x(ndime,nnode),lbd(3,3,nnode)
+
+
+ nvarl = ndofe*nnode            !number of element DOFs
+ msize = nvarl*(nvarl+1)/2      !size of stiffness matrix (upper triangle)
+ osec = -1                      !initializes section number
+ !***   loop over all the elements
+ bmatx = 0d0                    !initializes Bmatrix
+ e => heade
+ DO ielem=1,nelem
+   isec  = e%matno
+   IF( isec /= osec )THEN
+     sec => psecs(isec)%p
+     isotro= sec%iprop(1) == 0
+     plast = sec%mtbas%matdef(3) > 1
+     IF( .NOT.isotro ) plast = .FALSE.
+     osec  = isec
+   END IF
+   !  gathers the actual coordinates and local coordinate transf.
+   DO n=1,nnode      !for each element node
+     l = e%lnods(n)  !global node
+     x(1:ndime,n) = coora(1:ndime,l)  !actual coordinates
+     lbd(:,:,n)   = RESHAPE(euler(1:9,l),(/3,3/))      !actual local system
+     !v(:,n) = velnp(:,l)            !recover velocity
+
+   END DO
+   !  zero the elemental stiffness matrix
+   stiff(1:msize) = 0d0
+   CALL tanma8(nvarl,ndofe,ngaus,nstre,nnode,axesc,     &
+               sec%rprop(:),weigh,shape,deriv,          &
+               e%jac,e%stra0,e%stran,                   &
+               e%stres,e%epdef,                         &
+               e%sedef,bmatx,x,lbd,stiff(:),            &
+               e%llbd,isotro,plast)
+   ! assemble stiffness matrix and force vector
+   CALL stiaux(nnode,e%lnods(1),nvarl,ndofe,stiff(1),force(1),gstif(1) )
+   e => e%next
+ END DO
+ RETURN
+ END SUBROUTINE stiff8

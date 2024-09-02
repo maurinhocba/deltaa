@@ -1,0 +1,22 @@
+ SUBROUTINE bmat19(cd,bmem,t,ntype,lb3)
+
+ !*** membrane matrix  Linear Strain Triangle
+
+ IMPLICIT NONE
+
+ INTEGER(kind=4), INTENT(IN) :: ntype
+ REAL (kind=8), INTENT(IN) :: cd(nnode,3),t(2,2),lb3
+ REAL (kind=8), INTENT(OUT) :: bmem(2,nnode,4)
+
+ INTEGER (kind=4) :: j
+
+
+ DO j=1,nnode          !node
+   bmem(1:2,j,1) =  + cd(j,1)*t(1:2,1)
+   bmem(1:2,j,2) =  + cd(j,2)*t(1:2,2)
+   bmem(1:2,j,3) =  + cd(j,2)*t(1:2,1) + cd(j,1)*t(1:2,2)
+   IF( ntype == 3 ) bmem(1,j,4) =  + cd(j,3)*lb3
+ END DO
+
+ RETURN
+ END SUBROUTINE bmat19

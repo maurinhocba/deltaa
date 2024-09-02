@@ -1,0 +1,75 @@
+ SUBROUTINE acvd11(ifpre,heade,lside,nelem,nbn,nhead)
+ !******************************************************************
+ !
+ !*** updates internal node numbering and activates degrees of freedom
+ !
+ !******************************************************************
+ USE esets_db, ONLY : gnods, gelem !INTENT(OUT) gnods(maxnn,melen)
+ IMPLICIT NONE
+
+ ! dummy arguments
+ LOGICAL, INTENT(IN OUT) :: lside !flag TRUE if topology already computed
+ INTEGER (kind=4), INTENT(IN) :: nelem         !number of elements
+ INTEGER (kind=4), INTENT(IN OUT) :: nbn, &    !number of branching points
+                                     ifpre(:,:)
+ TYPE (ele11), POINTER :: heade   !pointer to first element in the set
+ TYPE (nodei), POINTER :: nhead   !pointer to first branching node
+
+ INTEGER (kind=4) i,j,k,ln(8)
+ TYPE (ele11), POINTER  :: e                     !element pointers
+ TYPE (nodei), POINTER :: ni      !pointer to first branching node
+
+
+ !***  create topological array  lnods(4:6,nelem)
+
+ IF(.NOT.lside) CALL toar11(heade,lside,nbn,nhead,nelem)
+
+ !*** activates degrees of freedom
+
+ e => heade                         !point to first element
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT   !if all elements processed, Exit loop
+   DO i=2,3
+     IF( ifpre(1,e%lnods(i)) == 1 ) & !to avoid to overwrite RIGID constraints
+       ifpre(1:2,e%lnods(i)) = 0      !release DOFs
+
+   END DO
+   gelem = gelem + 1                !update total number of elements
+   ln(1:2) = e%lnods(2:3)           !keep end nodes
+   k = 2                            !initializes position
+   SELECT CASE(e%lnods(1))          !previous node
+   CASE (:-1)                       !branching node
+     ni => nhead                    !search for branching node
+     DO j=1,-e%lnods(1)-1
+       ni=>ni%next
+     END DO
+     DO i=1,ni%nn                     !include extra nodes
+       IF(ni%lnods(i) == ln(2))CYCLE  !skip second node
+       k = k + 1                      !increment position
+       ln(k) = ni%lnods(i)            !extra node
+     END DO
+   CASE (1:)                        !standard
+     k = k + 1                        !increment position
+     ln(k) = e%lnods(1)               !left node
+   END SELECT
+   SELECT CASE(e%lnods(4))          !next node
+   CASE (:-1)                       !branching node
+     ni => nhead                    !search for branching node
+     DO j=1,-e%lnods(4)-1
+       ni=>ni%next
+     END DO
+     DO i=1,ni%nn                     !include extra nodes
+       IF(ni%lnods(i) == ln(1))CYCLE  !skip first node
+       k = k + 1                      !increment position
+       ln(k) = ni%lnods(i)            !extra node
+     END DO
+   CASE (1:)                        !standard
+     k = k + 1                        !increment position
+     ln(k) = e%lnods(4)               !rigth node
+   END SELECT
+   gnods(1:k,gelem) = ln(1:k)
+   e => e%next                      !point to next element
+ END DO
+
+ RETURN
+ END SUBROUTINE acvd11

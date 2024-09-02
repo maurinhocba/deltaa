@@ -1,0 +1,85 @@
+ SUBROUTINE tanma9z(nvarl,axesc,dmatx,jac,x,phig,phil,stiff)
+ !***********************************************************************
+ !
+ !****this routine compute the stiffness matrix for beam-shell (elem.2)
+ !
+ !***********************************************************************
+ IMPLICIT NONE
+    !***  routine parameters
+ INTEGER (kind=4), INTENT(IN) :: nvarl,axesc
+ REAL (kind=8), INTENT(IN) :: dmatx(:),jac(:),x(:,:),phil(:),phig(:)
+ REAL (kind=8), INTENT(OUT) :: stiff(:)
+    !***  local variables
+ INTEGER (kind=4) i,j,n,k
+ REAL    (kind=8) phin(2),daux(28),d(7,7),bm(4,2,7),derxi(2),phi,t1,t2,dphi,dx(2),l
+ REAL (kind=8),PARAMETER :: twopi=6.283185307179586d0
+
+    !     compute the local cartesian system
+ IF(axesc == 0) THEN
+   phin = phig
+ ELSE
+   DO n=1,2
+     phin(n) = phig(n) + phil(MIN(axesc,n))
+   END DO
+ END IF
+ IF(ABS(phin(2)-phin(1)) > 3.5d0) THEN
+   DO n=1,2
+      IF(phin(n) < 0) phin(n) = phin(n)+twopi
+   END DO
+ END IF
+
+  !       material matrix
+  !       computes the consistent elasto-plastic constitutive matrix
+ l = 2d0*jac(1)                      !L
+
+ d(1:4,1) = dmatx(1:4)                     !  1  2  3  4
+ d(2:4,2) = dmatx(5:7)                     !     5  6  7
+ d(3:4,3) = dmatx(8:9)                     !        8  9
+ d(4,4)   = dmatx(10)                      !          10
+ d(5:7,5) = dmatx(11:13)                   !             11 12 13
+ d(6:7,6) = dmatx(14:15)                   !                14 15
+ d(7,7)   = dmatx(16)                      !                   16
+
+ !WRITE(58,"(7e12.4)")d
+
+ !       scales d matrix & stress vector for numerical integration
+ k=0
+ DO i = 1,7          !only the lower triangle
+   DO j = i,7
+     k = k+1
+     daux(k) = d(j,i)*l
+   END DO
+ END DO
+ !                  b matrix
+ bm = 0d0
+ !     compute actual angles and curvatures
+ phi  = (phin(1)+phin(2))/2d0                 !angle at Gauss Point
+ derxi= (/ -1d0, 1d0 /)/l                     !Nodal function derivatives
+ dx(:) = MATMUL(x,derxi)
+ dphi = DOT_PRODUCT(phin,derxi)
+ t1 = COS(phi)
+ t2 = SIN(phi)
+
+ DO n=1,2                        !for each node
+   bm(1:2,n,1)= derxi(n)*dx(1:2)                  !E_11
+   !         bending contribution
+   bm(1,n,2)=- t1*dphi*derxi(n)                   !C_11
+   bm(2,n,2)=- t2*dphi*derxi(n)
+   bm(3,n,2)=- (dphi*0.5d0*(-t2*dx(1)+t1*dx(2))+            &
+                derxi(n)*( t1*dx(1)+t2*dx(2)))
+   ! Shear strain
+   bm(1,n,5)= -derxi(n)*t2                        !x_1
+   bm(2,n,5)=  derxi(n)*t1                        !x_2
+   bm(3,n,5)= -0.5d0*(dx(1)*t1+dx(2)*t2)          !alpha
+   ! psi
+   bm(4,n,2+n) = derxi(n)                         ! 3 & 4
+   bm(4,n,5+n) = 0.5d0                            ! 6 & 7
+ END DO
+ !                  sums the material contribution
+ CALL btdbpr(bm(1,1,1),daux(1),stiff(1),nvarl,7)
+ !                  geometric part
+ !CALL kgeom9(2,ndofe,nvarl,ntype,deriv(:,g),shape(:,g),         &
+ !             phin,x,jac(g),r0(g),strdv,stiff)
+
+ RETURN
+ END SUBROUTINE tanma9z

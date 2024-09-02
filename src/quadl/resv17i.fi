@@ -1,0 +1,223 @@
+ SUBROUTINE resv17i( heade, ntype, coora, resid, ierr, ttime, coord, ngaus, nnode)
+ !-------------------------------------------------------------------
+ !
+ !          EVALUATION OF INTERNAL FORCES ELEMENT  2-D QUAD
+ !
+ !-------------------------------------------------------------------
+ USE npo_db, ONLY : coori  !for a check
+ IMPLICIT NONE
+
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: ntype, &     !problem type
+                                 ngaus, &     !number of gauss points
+                                 nnode        !number of nodes
+ INTEGER (kind=4), INTENT(OUT) :: ierr        !flag for error detection
+ REAL(kind=8),INTENT (IN) :: coora(:,:),    & !present coordinates
+                             coord(:,:),    & !original coordinates
+                             ttime            !present total time
+ REAL(kind=8),INTENT (IN OUT) :: resid(:,:)   !internal nodal forces
+ TYPE (ele17), POINTER  :: heade              !pointer to first element
+
+ ! local variables
+ LOGICAL :: newmt     ! TRUE if material constant computation necessary
+ INTEGER (kind=4) :: osec,  & !associated material of previous element
+                     mtype, & !associated material type
+                     is       !isotropic hardening model
+ REAL (kind=8) :: km,gm,propi(7),fnu !bulk modulus and shear modulus
+ INTEGER (kind=4) ielem, & !element number
+                  isec,  & !associated material
+                  i,j,k,n  !different indexes
+
+ REAL (kind=8) stres(4),   & !stresses (different measures)
+               sigma(4),   & !stresses (different measures)
+               stran(4),   & !C=U^2  also Log strains
+               bmat(2,nnode,4), & !B matrix
+               x(2,nnode),      & !nodal coordinates of the element
+               x0(2,nnode),  & !nodal original coordinates
+               g(2,2),     & !in-plane deformation gradient
+               r0,r,       & !original and current 'r' coordinate
+               r1,r2,      & !eigevector components in local system
+               lb(3),      & !eigenvalues
+               c(4),       & !Elastic constitutive matrix for plane stress
+               delta(4),   & !volumetric strain/3 and Jacobian
+               deltm,      & !Average volumetric strain
+               press,      & !first stress invariant (mean pressure)
+               rl(2,nnode)   !nodal internal equivalent forces
+ REAL (kind=8) :: str(4,ngaus),rf(ngaus)
+
+ INTEGER (kind=4), PARAMETER :: ngaud = 2
+ REAL (kind=8) :: shape(nnode,ngaus),deriv(nnode,2),posgp(2),weigp(2),jac(ngaus)
+
+ TYPE (ele17), POINTER :: e    !pointer to an element data
+ TYPE (section), POINTER :: sec    !pointer to section data
+ TYPE (mater), POINTER :: mat  !pointer to an material data
+
+ REAL(kind=8) :: xi(2,nnode),u(2,nnode),s0(3,ngaus)
+
+
+ IF( ntype == 3 )THEN
+   CALL gaussq (ngaud ,posgp ,weigp )
+
+   !       gauss points shape and derivatives of nodal functions
+
+   k = 0
+   DO i=1,ngaud
+     DO j=1,ngaud
+       k = k+1
+       CALL shape3(deriv(1,1),shape(1,k),posgp(i),posgp(j),nnode)
+     END DO
+   END DO
+ END IF
+
+ !***  Computes nodal internal forces
+
+ sigma(4) = 0d0                      !initializes for plane stress
+ stres(4) = 0d0                      !initializes for plane stress
+ bmat(:,:,4) = 0d0                   !initializes for plane stress or strain
+ rf = 1d0                            !initializes for axilsymmetric problems
+ osec = -1                           !no previous material
+ e => heade                          !point to first element in the list
+ DO                                  !loop over all the elements
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = e%numel                   !element number
+   isec = e%matno                   !associated material
+   !     SET MATERIAL CONSTANTS
+   newmt = osec /= isec             !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+     sec => psecs(isec)%p
+     osec = isec                    !keep present material
+     mat => sec%mtbas                !point to associated material
+     mtype = mat%mtype               !type of base material
+     is   = mat%matdef(4)           !isotropic hardening model
+     ! ONLY MTYPES 1, 5) ARE ALLOWED
+     IF( mtype == 1)THEN              !Isotropic Elastic - Anisotropic Plastic
+       !  elasticity constants
+       IF( ntype == 1 )THEN           !plane stress
+         c(1:4) = mat%prope(7:10)   ! plane stress elasticity matrix
+         fnu = - mat%prope(2)/(1d0-mat%prope(2))
+       ELSE                           ! plane strain or axilsymmetric
+         km = mat%prope(4)*3d0      ! bulk modulus * 3
+         gm = mat%prope(3)          ! shear modulus
+       END IF
+     ELSE IF( mtype == 5 )THEN                !orthotropic elastic
+       IF( ntype == 1 ) THEN           !plane stress
+         c(1) = mat%prope(16)   !(1,1)  11-11
+         c(2) = mat%prope(17)   !(2,1)  11-22
+         c(3) = mat%prope(18)   !(2,2)  22-22
+         c(4) = mat%prope(19)   !(3,3)  12-12
+       ELSE
+         propi(1) = mat%prope(29)   !(1,1)  11-11
+         propi(2) = mat%prope(30)   !(2,1)  11-22
+         propi(3) = mat%prope(32)   !(4,1)  11-33
+         propi(4) = mat%prope(34)   !(2,2)  22-22
+         propi(5) = mat%prope(36)   !(4,2)  22-33
+         propi(6) = mat%prope(39)   !(3,3)  12-12
+         propi(7) = mat%prope(44)   !(4,4)  33-33
+       END IF
+     END IF
+   END IF
+
+   x = coora(:,e%lnods)                   !*** computes actual configuration
+   x0 = coord(:,e%lnods)                  !*** computes original configuration
+   rl = 0d0                               !Initializes equivalent nodal forces
+   deltm = 0d0                            !initializes meam volumetric strain
+   !   Gauss point loop
+   DO k=1,ngaus
+     ! compute deformation gradient f and V^-2=tp(f) f
+     g = MATMUL(x,e%cartd(:,:,k))  !deformation gradient f=dX/dx
+     stran(1) = g(1,1)*g(1,1) + g(2,1)*g(2,1)  !V^-2(1,1)
+     stran(2) = g(1,2)*g(1,2) + g(2,2)*g(2,2)  !V^-2(2,2)
+     stran(3) = g(1,1)*g(1,2) + g(2,1)*g(2,2)  !V^-2(1,2)
+     !computes (logarithmic) in-plane strains
+     CALL lgst14(stran,r1,r2,lb,'RESV17',ierr) !=> -e_ln  r1 & r2 are l1 & l2
+     IF( ierr == 1 )THEN
+       WRITE(55,"(4i5,4e12.4)",ERR=9999) e%lnods(1:4),stran(1:3)
+       WRITE(55,"(2e15.4)",ERR=9999) x
+       CALL runen3('RESV17: negative eigenvalues of U^2')
+     END IF
+     SELECT CASE (ntype)
+     CASE (1)  !   plane stress
+       !stran(4) = fnu*(stran(1)+stran(2))      !this is true but modifies in-plane volume
+       stran(4) = 0d0                          !this is true but modifies in-plane volume
+     CASE (2)  !   plane strain
+       stran(4) = 0d0                          !this is unnecessary
+     CASE (3)  !   axilsymmetric
+       r0 = DOT_PRODUCT(x0(1,:),shape(:,k))    !original r coordinate
+       r  = DOT_PRODUCT(x(1,:),shape(:,k))     !present r coordinate
+       stran(4) = (r/r0)**2                    !Lambda_3^(-2)
+       !rf(k) = stran(4)/r                      !Coefficient for B matrix
+       stran(4) = LOG(stran(4))/2d0            !again => -e_ln
+     END SELECT
+     stran = -stran !change sign
+     IF( ntype == 1 )THEN            !plane stress
+       IF( mtype == 1 )THEN          !one component material
+         stres(1) = c(1)*stran(1)+c(2)*stran(2)
+         stres(2) = c(2)*stran(1)+c(3)*stran(2)
+         stres(3) = c(4)*stran(3)
+       ELSE IF ( mtype == 5 )THEN ! Orthotropic elastic
+         stres(1) = c(1)*stran(1)+c(2)*stran(2)
+         stres(2) = c(2)*stran(1)+c(3)*stran(2)
+         stres(3) = c(4)*stran(3)
+       END IF
+     ELSE    !(ntype == 2 or 3) Plane Strain or Axisymmetric
+       IF( mtype == 1 )THEN          !one component material
+         ! compute volumetric and deviatoric parts
+         delta(k) = ( stran(1) + stran(2) + stran(4) )/3d0
+         deltm = deltm + delta(k)*e%dvol(k)     !use mean volumetric strain
+         stran(1) = 2d0*(stran(1) - delta(k))  !twice the deviatoric shear strain
+         stran(2) = 2d0*(stran(2) - delta(k))
+         stran(4) = 2d0*(stran(4) - delta(k))
+         !elastic (trial) strains
+         stres= gm*stran                         !Trial elastic shear stresses
+       ELSE IF ( mtype == 5 )THEN ! Orthotropic elastic
+         stres(1) = propi(1)*stran(1)+propi(2)*stran(2)+propi(3)*stran(3)
+         stres(2) = propi(2)*stran(1)+propi(4)*stran(2)+propi(5)*stran(3)
+         stres(3) = propi(6)*stran(3)
+         stres(4) = propi(3)*stran(1)+propi(5)*stran(2)+propi(7)*stran(3)
+       END IF
+     END IF
+     ! store auxiliar values for second loop
+     str(:,k)  =  stres
+     jac(k) = EXP(stran(1)+stran(2)+stran(4))  !V/V0
+   END DO
+
+   IF( ntype /= 1 )THEN  !only for one-component material
+     IF( mtype == 1 )THEN
+       IF( nnode == 4 )THEN
+         deltm = deltm/SUM(e%dvol)
+         press = km*deltm
+         str(1,:) = str(1,:) + press
+         str(2,:) = str(2,:) + press
+         str(4,:) = str(4,:) + press
+       ELSE
+         delta = delta*km
+         str(1,:) = str(1,:) + delta
+         str(2,:) = str(2,:) + delta
+         str(4,:) = str(4,:) + delta
+       END IF
+     ELSE
+       ! nothing yet
+     END IF
+   END IF
+   DO k=1,ngaus         !second Gauss loop (for one component material)
+     ! recovers Gauss point values
+     stres = str(:,k)   !stresses
+     e%stint(:,k) = stres   !average Kirchhoff stress
+     sigma = stres*e%dvol(k)/jac(k) !Original dvol used
+     !       actual configuration B Matrices
+     g = MATMUL(x0,e%cartd(:,:,k))  !deformation gradient
+     CALL bmat17(e%cartd(:,:,k),bmat,g,nnode,rf(k),shape(:,k),ntype)
+     CALL proma3(rl(1,1),bmat(1,1,1),sigma(1),2*nnode,4,.FALSE.)  !nodal contributions
+   END DO
+
+   DO i=1,nnode             !for each node in the element
+     n = e%lnods(i)     !node
+     resid(1:2,n) = resid(1:2,n)-rl(1:2,i) !sum internal force
+   END DO
+
+   e => e%next          !point to next node in the list
+ END DO
+
+ RETURN
+ 9999 CALL runen2(' ')
+ END SUBROUTINE resv17i

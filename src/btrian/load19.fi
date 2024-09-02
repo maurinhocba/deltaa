@@ -1,0 +1,53 @@
+ SUBROUTINE load19 (igrav,force,gvect,gravy,heade,ver)
+ !********************************************************************
+ !
+ !***  evaluates gravity load vector for 2-D Solid Bezier triangular elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4) :: igrav,ver
+ REAL (kind=8) :: force(:,:),gvect(:),gravy
+ TYPE (ele19), POINTER  :: heade
+
+ !        local variable
+
+ INTEGER (kind=4) i,j,n,l,osec
+ REAL (kind=8) weigt,fvect(2),fv(2,nnode),fg(2)
+ TYPE (ele19), POINTER :: elem
+ TYPE (section), POINTER :: sec
+
+ IF(igrav /= 0) THEN       !if gravity is present
+
+   osec = -1
+   elem => heade           !point to first element
+   DO
+     IF (.NOT.ASSOCIATED (elem) ) EXIT    !all elements processed, Exit loop
+
+     j     = elem%matno                     !associated material
+     IF( j /= osec ) THEN
+       sec => psecs(j)%p
+       weigt = gravy*sec%mtbas%prope(5)     !density
+       osec = j
+     END IF
+     IF(weigt /= 0.0d0) THEN                !if not zero
+       fv = 0d0 ! Initializes
+       fvect = weigt*gvect(1:2)             !gravity vector
+       DO i=1,ngaus
+         fg = fvect*elem%area(i)
+         DO n=1,nnode
+           fv(:,n) = fv(:,n) + fg*shapef(n,i,ver)
+         END DO
+       END DO
+       DO n=1,nnode                          !for each node (nnode=3)
+         l = elem%lnods(n)                   !node number
+         force(1:2,l) = force(1:2,l) + fv(1:2,n) !sum on global force vector
+       END DO
+     END IF
+
+     elem => elem%next                       !point to next element
+   END DO
+ END IF
+
+ RETURN
+ END SUBROUTINE load19

@@ -1,0 +1,111 @@
+ SUBROUTINE masm26(ndime,heade,emass,mass,sumat,lumpd,nnode,ngaus,ifpre)
+
+ ! for 8 node elements witn 2x2x2 integration points
+
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd
+ INTEGER (kind=4), INTENT(IN) :: ndime,nnode,ngaus,ifpre(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele26 ), POINTER :: heade
+
+ INTEGER (kind=4) :: isec,idofn,lm(ndime,nnode),osec,g,i,j,k,ii,n,l,nv,nv2
+ REAL (kind=8) :: suma,voli,rhoel,m(nnode)
+ REAL (kind=8), ALLOCATABLE :: a(:),ms(:)
+ TYPE( ele26 ), POINTER :: e
+ TYPE (section), POINTER :: sec
+ LOGICAL :: newm
+ REAL (kind=8) :: sh(nnode,8),der(nnode,3),sumae,aux
+ REAL(kind=8), PARAMETER :: r3(2) = (/ -0.577350269189626D+00, 0.577350269189626D+00 /)
+ INTEGER (kind= 4) posmt
+ posmt(nv2,i,j) = (nv2-i)*(i-1)/2+j  !position i,j in mass(nv x nv)
+
+ n = nnode*(nnode+1)/2                    !size of array a
+ l = (nnode*ndime*(nnode*ndime+1))/2      !size of mass matrix
+ ALLOCATE(a(n),ms(l))
+ nv = nnode*ndime     !number of DOFs
+ nv2 = 2*nnode*ndime  !twice the number of DOFs
+ suma=0.
+ osec = -1
+! IF(.NOT.lumpd) THEN
+   ms = 0D0
+   g = 0
+   DO i=1,2           !zeta
+     DO j=1,2           !eta
+       DO k=1,2           !xi
+         g = g+1
+         CALL shape5(der,sh(1,g),r3(k),r3(j),r3(i),nnode)
+       END DO
+     END DO
+   END DO
+
+! END IF
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED (e) )EXIT
+   isec = e%matno
+   newm = isec /= osec
+   IF ( newm )THEN
+     sec => psecs(isec)%p
+     IF( sec%mabas == -1 )THEN
+       rhoel = sec%rprop(3)
+     ELSE
+       rhoel = sec%mtbas%prope(5)
+     END IF
+     osec = isec
+   END IF
+
+   m = 0
+   sumae = 0d0
+   DO g=1,ngaus
+
+     voli = e%dvol(g)*rhoel
+     sumae = sumae + voli
+
+     ii = 0                   !Initializes Position in matrix
+     DO n = 1,nnode           !For each node
+        m(n) = m(n) + sh(n,g)*voli  !associated (lumped) mass
+        IF(.NOT.lumpd) THEN    !Consistent matrix
+           DO l = n,nnode       !for each node
+             ii = ii+1          !position in matrix
+             a(ii) = a(ii) + sh(n,g)*sh(l,g)*voli
+           END DO
+        END IF     !.NOT.lumpd
+     END DO     !n=1,nnode
+   END DO     !g=1,ngaus
+
+   !---generates lumped mass matrix proportional to diagonal
+
+   DO n=1,nnode
+     l = e%lnods(n)
+     DO idofn=1,ndime
+       emass(idofn,l)=emass(idofn,l)+m(n)
+     END DO
+   END DO
+
+   IF(.NOT.lumpd) THEN
+                 !consistent mass matrix  Assembles over MASS(maxa)
+     i = 0                            ! Position in matrix A initialization
+     g = 0                            ! elemental DOF initialization
+     DO n = 1,nnode                   ! For each nodee
+       j = (n-1)*ndime                ! Initializes Column position in M
+       DO l = n,nnode                 ! For each node
+         i = i+1                      ! Matrix position in A
+         k = (l-1)*ndime              ! Initializes Row position in M
+         DO ii = 1,ndime              ! For each direction in space
+           ms(posmt(nv2,j+ii,k+ii)) = a(i)
+         END DO
+       END DO
+     END DO
+     lm = ifpre(1:3,e%lnods)
+     CALL ensmat(nv,lm(1,1),ms(1),mass(1))
+   END IF
+
+   e => e%next
+   suma = suma + sumae
+ END DO
+ !IF(iwrit == 1) &
+ WRITE(lures,"(//'  total mass for SOLAG element :', e15.7)")suma
+ sumat = sumat + suma
+ DEALLOCATE (a,ms)
+ RETURN
+ END SUBROUTINE masm26

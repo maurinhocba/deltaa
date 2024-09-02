@@ -1,0 +1,35 @@
+ SUBROUTINE bsma29 (f_tan,f_3,anssh,nassp,n_3,cartd,ipcdm,bs)
+ ! compute Strain-displacement matrix for transverse shear
+ ! at assumed strain points for QPRISM  solid-shell element 29 (15 nodes)
+ IMPLICIT NONE
+ !dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: anssh,nassp
+ REAL (kind=8), INTENT(IN) :: f_tan(:,:,:), & !(ndime,nassp,nface) Natural gradient in tangent direction
+                              f_3(:,:,:),   & !(ndime,nassp,nface) Cartesian gradient in normal direction
+                              n_3(:,:,:),   & !(nnode,nassp,nface) Cartesian derivatives of shape functions in normal direction
+                              cartd(:,:,:), & !(nnode,face,ngaup)
+                              ipcdm(:,:,:,:)  !(nnode,2,nface,ngaud)
+ REAL (kind=8), INTENT(OUT) :: bs(:,:,:,:)     !(ndime,nnode,nassp,nface) Bs matrix for both faces
+ !local variables
+ INTEGER (kind=4) :: iass,node,face,g,j
+
+ DO face=1,nface   !for each face
+   DO iass=1,nassp   !for each assumed strain point
+     IF( anssh == 0)THEN
+       g = (iass-1)/2+1
+       j = MOD(iass-1,2)+1
+       DO node=1,nnode   !for each node in the element
+         bs(:,node,iass,face) = f_tan(:,iass,face)*cartd(node,face,g)   & !F_cart * N_3
+                              +   f_3(:,iass,face)*ipcdm(node,j,face,g)  !F_3 * N_cart
+       END DO
+     ELSE
+       DO node=1,nnode   !for each node in the element
+         bs(:,node,iass,face) = f_tan(:,iass,face)* n_3(node,iass,face) &  !F_tan * N_3
+                              +   f_3(:,iass,face)*ntan(node,iass,face)   !F_3 * N_tan
+       END DO
+     END IF
+   END DO
+
+ END DO
+ RETURN
+ END SUBROUTINE bsma29

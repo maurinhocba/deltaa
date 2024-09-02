@@ -1,0 +1,255 @@
+ SUBROUTINE tanm03(nvarl,nnode,ndofe,nstre,nlayr,plast,matty,quad,mems,cd,   &
+                   lnods,prop,dmatx,sf,coora,euler,                       &
+                   dvolu,cartd,jacin,strsg,ambda,ehist,                   &
+                   strap,stres,stiff,newmt,thick,q,stabq,nangl,jas)
+ !***********************************************************************
+ !
+ !****this routine compute the stiffness matrix for triangular-shell TLLL
+ !
+ !***********************************************************************
+ IMPLICIT NONE
+ !***  routine parameters
+ LOGICAL, INTENT(IN) :: plast,quad
+ LOGICAL, INTENT(IN OUT) :: newmt,mems(:)
+ INTEGER (kind=4), INTENT(IN) :: nvarl,nnode,ndofe,nstre,nlayr,matty,lnods(:)
+ REAL (kind=8), INTENT(IN) :: prop(:),dmatx(:),sf(3),coora(:,:),            &
+                              euler(:,:),dvolu,cartd(:,:),jacin(:,:), &
+                              strsg(:),ambda(:),thick,q(:),stabq
+
+ REAL(kind=8), POINTER :: ehist(:),strap(:,:),stres(:,:),cd(:,:,:),nangl(:,:),jas(:,:)
+ REAL (kind=8), INTENT(OUT) :: stiff(:)
+ !***  local variables
+ INTEGER (kind=4) i,j,k,l,le,la
+ REAL (kind=8) strdv(nstre),tgp(3),dx(3,2),dt(3,2),x(3,6),t(3,3),lb(3,2,3),  &
+               daux(55),f2,bbe(5,3,3),bm(3,nnode-3,3),tm(3,2,3),     &
+               bsmtx(5,3,ngamm),aa,bb,cc,a6,bfs(2,3,3),bfb(2,3,4),bmatx(nvarl,10)
+ INTEGER (kind=4), SAVE :: nstr,nd      !keep sizes
+ REAL (kind=8), SAVE :: d(8,8),dm(55)   !and matrices
+
+
+ !DOFs are ordered as follows
+ ! node 1  1-3               3
+ ! node 4  4-5               5
+ ! node 2  1-3               8
+ ! node 5  4-5              10
+ ! node 3  1-5              13
+ ! node 6  4-5              15
+ ! node 7  1-3  if Quad     18
+ ! node 8  1-3              21
+ ! node 9  1-3              24
+ ! node 1  7-8  if zigzag   26  17
+ ! node 2  7-8              28  19
+ ! node 3  7-8              30  21
+
+ !     gathers the actual coordinates and directors
+ x(:,1:3)  = coora(:,lnods(1:3))
+ lb(:,1,:) = euler(1:3,lnods(4:6))
+ lb(:,2,:) = euler(4:6,lnods(4:6))
+ t  = euler(7:9,lnods(4:6))
+ !                  evaluates bshear matrix
+ CALL bshe03(x,t,lb,bsmtx,bfs,jas,nangl)
+ !     evaluates director, director & configuration derivatives at gauss points
+ dx = MATMUL(x(:,1:3),cartd)
+ dt = -2d0*MATMUL(t,cartd(:,:))
+ tgp = (t(:,1)+t(:,2)+t(:,3))/3d0
+ !
+ la = 16
+ IF(quad)THEN
+   la = 25
+   le = 16
+   DO i=1,3
+     j=lnods(i+6)
+     IF(j > 0) THEN
+       x(:,i+3) = coora(:,j)
+       tm(:,:,i) = MATMUL(x(:,1:3),cd(1:3,:,i))         !x(1:2)(i) both derivatives
+       tm(:,1,i)   = tm(:,1,i) + x(:,i+3)*cd(4,1,i)     !x(1)(i)  add fourth node
+       tm(:,2,i)   = tm(:,2,i) + x(:,i+3)*cd(4,2,i)     !x(2)(i)
+     END IF
+   END DO
+
+ END IF
+ !                  b matrix for membrane and bending
+ CALL bmat03(cartd,lb,bbe,bm,dx,dt,quad,mems,tm,cd,ndofe,nangl,bfb)
+
+ !     material matrix and memb & bend geo and qaux
+! IF(plast) THEN
+!   !      computes the consistent elasto-plastic constitutive matrix
+!   IF( nlayr == 1 )THEN
+!     CALL elpmo6(matty,ambda(2),prop(1),dmatx(1),strsg(1),strap(1,1), &
+!                 ehist(1),dx(1,1),dx(1,2),tgp(1),d(1,1))
+!   ELSE
+!     CALL elpms6(nlayr,ambda(2),dmatx(1),                           &
+!                 strap(1,1),strap(1,2),stres(1,1),              &
+!                 dx(1,1),dx(1,2),dt(1,1),dt(1,2),d(1,1),thick)
+!   END IF
+! ELSE
+!   IF( nlayr == 1 )THEN
+!     IF( newmt )CALL modps6(matty,d(1,1),dmatx(1),prop(1))
+!     aa = d(7,7)*jacin(1,1)**2+d(8,8)*jacin(2,1)**2+d(8,7)*jacin(1,1)*jacin(2,1)*2d0
+!     bb = d(7,7)*jacin(1,2)**2+d(8,8)*jacin(2,2)**2+d(8,7)*jacin(2,2)*jacin(1,2)*2d0
+!     cc = d(7,7)*jacin(1,1)*jacin(1,2)+d(8,8)*jacin(2,2)*jacin(2,1)+d(8,7)*jacin(1,2)*jacin(2,1)*2d0
+!     ! value at center
+!     a6 = dvolu/9d0
+!     daux( 1) = (+    aa+    bb-2d0*cc)*a6  !ds(1,1)
+!     daux( 2) = (+    aa-2d0*bb+    cc)*a6  !ds(2,1)
+!     daux( 3) = (-2d0*aa+    bb+    cc)*a6  !ds(3,1)
+!     daux( 4) = (+    aa+4d0*bb+4d0*cc)*a6  !ds(2,2)
+!     daux( 5) = (-2d0*aa-2d0*bb-5d0*cc)*a6  !ds(3,2)
+!     daux( 6) = (+4d0*aa+    bb+4d0*cc)*a6  !ds(3,3)
+!     ! + stabilization
+!     a6 = a6/2d0*stabq*(aa+bb+cc)
+!     daux(1:6) = daux(1:6) + a6
+!     CALL btdbpr(bsmtx(1,1),daux(1),stiff(1),nvarl,ngamm)
+!     nstr = 6
+!   ELSE
+!     f2 = thick*thick/12d0*ambda(2)**2
+!     d(1,1) = dmatx(1)*thick
+!     d(2,1) = dmatx(2)*thick
+!     d(2,2) = dmatx(3)*thick
+!     d(3,3) = dmatx(4)*thick
+!     d(4,4) = d(1,1)*f2
+!     d(5,4) = d(2,1)*f2
+!     d(5,5) = d(2,2)*f2
+!     d(6,6) = d(3,3)*f2
+!     d(7,7) = dmatx(5)*thick
+!     d(8,8) = d(7,7)
+!   END IF
+! END IF
+
+! temporary
+     IF( newmt )THEN
+       IF( plast )THEN
+         d = 0d0
+         f2 = thick*thick/12d0*ambda(2)**2
+         d(1,1) = dmatx(1)*thick
+         d(2,1) = dmatx(2)*thick
+         d(2,2) = dmatx(3)*thick
+         d(3,3) = dmatx(4)*thick
+         d(4,4) = d(1,1)*f2
+         d(5,4) = d(2,1)*f2
+         d(5,5) = d(2,2)*f2
+         d(6,6) = d(3,3)*f2
+         d(7,7) = dmatx(5)*thick
+         d(8,8) = d(7,7)
+          nstr = nstre
+          nd = (nstr*(nstr+1))/2
+       ELSE
+         IF( nlayr == 1 )THEN
+           IF( newmt )THEN
+             IF( ndofe == 5 )THEN
+               CALL modps6(matty,d(1,1),dmatx(1),prop(1),sf(1))
+               nstr = 6
+               nd = (nstr*(nstr+1))/2
+               dm(1:nd) = (/ d(1:6,1),d(2:6,2),d(3:6,3),d(4:6,4),d(5:6,5),d(6,6) /)
+             ELSE
+               CALL dmat03(dm,dmatx)
+               nstr = 10
+               nd = (nstr*(nstr+1))/2
+             END IF
+             newmt = .FALSE.
+           END IF
+         END IF
+       END IF
+     END IF
+     IF( ndofe == 5 )THEN
+       a6 = dvolu/9d0
+       ! value at center
+       aa = d(7,7)*jacin(1,1)**2+d(8,8)*jacin(2,1)**2+d(8,7)*jacin(1,1)*jacin(2,1)*2d0
+       bb = d(7,7)*jacin(1,2)**2+d(8,8)*jacin(2,2)**2+d(8,7)*jacin(2,2)*jacin(1,2)*2d0
+       cc = d(7,7)*jacin(1,1)*jacin(1,2)+d(8,8)*jacin(2,2)*jacin(2,1)+d(8,7)*jacin(1,2)*jacin(2,1)*2d0
+       ! stabilization factor
+       f2 = a6/2d0*stabq*(aa+bb+cc)
+       daux( 1) = (+    aa+    bb-2d0*cc)*a6  !ds(1,1)
+       daux( 2) = (+    aa-2d0*bb+    cc)*a6  !ds(2,1)
+       daux( 3) = (-2d0*aa+    bb+    cc)*a6  !ds(3,1)
+       daux( 4) = (+    aa+4d0*bb+4d0*cc)*a6  !ds(2,2)
+       daux( 5) = (-2d0*aa-2d0*bb-5d0*cc)*a6  !ds(3,2)
+       daux( 6) = (+4d0*aa+    bb+4d0*cc)*a6  !ds(3,3)
+       daux(1:6) = daux(1:6) + f2
+       CALL btdbpr2(bsmtx,daux,stiff,15,ngamm,nvarl,(/ 1:15 /))
+     ELSE
+       a6 = dvolu/6d0
+       aa = dmatx(13)*jacin(1,1)**2+dmatx(15)*jacin(2,1)**2+dmatx(14)*jacin(1,1)*jacin(2,1)*2d0
+       bb = dmatx(13)*jacin(1,2)**2+dmatx(15)*jacin(2,2)**2+dmatx(14)*jacin(2,2)*jacin(1,2)*2d0
+       cc = dmatx(13)*jacin(1,1)*jacin(1,2)+dmatx(15)*jacin(2,2)*jacin(2,1)+dmatx(14)*jacin(1,2)*jacin(2,1)*2d0
+
+       daux( 1) = (+    aa+    bb-    cc)*a6  !ds(1,1)
+       daux( 2) = (+    aa-    bb+    cc)*a6  !ds(2,1)
+       daux( 3) = (-    aa+    bb+    cc)*a6  !ds(3,1)
+       daux( 7) = (+    aa+3d0*bb+3d0*cc)*a6  !ds(2,2)
+       daux( 8) = (-    aa-    bb-3d0*cc)*a6  !ds(3,2)
+       daux(12) = (+3d0*aa+    bb+3d0*cc)*a6  !ds(3,3)
+
+       f2 = dmatx(63)+dmatx(64)         !this is a simplification? check
+       aa = dmatx(62)*jacin(1,1)**2+dmatx(65)*jacin(2,1)**2+f2*jacin(1,1)*jacin(2,1)
+       bb = dmatx(62)*jacin(1,2)**2+dmatx(65)*jacin(2,2)**2+f2*jacin(2,2)*jacin(1,2)
+       cc = dmatx(62)*jacin(1,1)*jacin(1,2)+dmatx(65)*jacin(2,2)*jacin(2,1)+f2*jacin(1,2)*jacin(2,1)
+
+       daux( 4) = (+    aa+    bb-    cc)*a6   !ds(4,1)
+       daux( 5) = (+    aa-    bb+    cc)*a6   !ds(5,1)
+       daux( 6) = (-    aa+    bb+    cc)*a6   !ds(6,1)
+       daux( 9) = daux(5)                      !ds(4,2)
+       daux(10) = (+    aa+3d0*bb+3d0*cc)*a6   !ds(5,2)
+       daux(11) = (-    aa-    bb-3d0*cc)*a6   !ds(6,2)
+       daux(13) = daux(6)                      !ds(4,3)
+       daux(14) = daux(11)                     !ds(5,3)
+       daux(15) = (+3d0*aa+    bb+3d0*cc)*a6   !ds(6,3)
+
+       aa = dmatx(59)*jacin(1,1)**2+dmatx(61)*jacin(2,1)**2+dmatx(60)*jacin(1,1)*jacin(2,1)*2d0
+       bb = dmatx(59)*jacin(1,2)**2+dmatx(61)*jacin(2,2)**2+dmatx(60)*jacin(2,2)*jacin(1,2)*2d0
+       cc = dmatx(59)*jacin(1,1)*jacin(1,2)+dmatx(61)*jacin(2,2)*jacin(2,1)+dmatx(60)*jacin(1,2)*jacin(2,1)*2d0
+
+       daux(16) = (+    aa+    bb-    cc)*a6   !ds(1,1)
+       daux(17) = (+    aa-    bb+    cc)*a6   !ds(2,1)
+       daux(18) = (-    aa+    bb+    cc)*a6   !ds(3,1)
+       daux(19) = (+    aa+3d0*bb+3d0*cc)*a6   !ds(2,2)
+       daux(20) = (-    aa-    bb-3d0*cc)*a6   !ds(3,2)
+       daux(21) = (+3d0*aa+    bb+3d0*cc)*a6   !ds(3,3)
+       l = 1
+       j = 16
+       bmatx(1:21,1:6) = 0d0
+       DO i=1,3
+         bmatx(l:l+4,1:3) = bsmtx(:,i,:)   !assumed shear matrix
+         l = l+5
+         bmatx(j:j+1,4:6) = bfs(:,i,:)    !assumed shear matrix
+         j = j+2
+       END DO
+       j = 16
+       IF( quad )j = 25
+       CALL btdbpr2(bmatx(1:21,1:6),daux(:),stiff,21,6,nvarl,(/ 1:15,j:j+5 /))
+     END IF
+
+ !IF( nstr == nstre )THEN  !for Elastic-plastic analysis, not happening
+ !  auxil = MATMUL(bsmtx,TRANSPOSE(ap1t))
+ !  !       bscartesian = jacobian**(-1) bshearmatrix
+ !  bmatx(1:15,7:8) = MATMUL(auxil,TRANSPOSE(jacin))
+ !END IF
+
+ bmatx = 0d0
+ l = 1
+ DO i=1,3
+   bmatx(l:l+2,1:3) = bm(:,i,:)    !includes membrane
+   bmatx(l:l+4,4:6) = bbe(:,i,:)   !includes bending
+   l = l+5
+   IF( quad )THEN
+     bmatx(le:le+2,1:3) = bm(:,i+3,:)   !additional membrane
+     le = le+3
+   END IF
+   IF( ndofe > 5 )THEN
+     bmatx(la:la+1,7:10) = bfb(:,i,:)   !includes bending
+     la = la+2
+   END IF
+ END DO
+ daux(1:nd) = dvolu*dm(1:nd)
+ CALL btdbpr(bmatx(1,1),daux(1),stiff(1),nvarl,nstr)
+ !                  geometric part due to  membrane & bending stresses
+ !IF(plast)RETURN !do not include load-geometric stiffness
+ !not for QUAD
+ !       scales stress vector for numerical integration
+ strdv(1:6) = strsg(1:6)*dvolu
+ CALL kgeo03(nvarl,cartd,lb,t,dx,strdv,stiff,quad,mems,tm,cd)
+ !     adds the geometric part due to shear for assumed strain elements
+ CALL kgsh03(nvarl,q,x,t,lb,stiff)
+
+ RETURN
+ END SUBROUTINE tanm03

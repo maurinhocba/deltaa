@@ -1,0 +1,268 @@
+ SUBROUTINE toar14(lside,nelem,heade)
+
+ ! Create topological array
+
+ IMPLICIT NONE
+ INTEGER (kind=4), INTENT(IN) :: nelem !number of elements
+ TYPE (ele14), POINTER :: heade   !pointer to first element in the set
+ LOGICAL :: lside
+ !---------------------------------------
+ INTEGER (kind=4), INTENT(OUT) :: valences(10,npoin)     !1: valence 2: borde 3-10: nudos
+ REAL (kind=8), INTENT(IN) :: coord(3,npoin)             !to order nodes in valences
+
+ ! local variables
+ INTEGER (kind=4) maxsd,i,ii,j,jj,k,ll,l,n,nsd,j1,k1,ielem,jelem,nn,jjj,nbs,nl(6)
+ INTEGER (kind=4), PARAMETER :: nextn(3) = (/2,3,1/) !cycling list
+ TYPE (ele14), POINTER  :: e, ej                     !element pointers
+ LOGICAL :: first,err
+ INTEGER (kind=4), ALLOCATABLE :: ns(:,:),ln(:,:),lock(:)
+ !---------------------------------------
+ REAL (kind=8) :: x0(3),x(x,8),ang(8),co,si,t1(3),t2(3),a,t3(3),t12(3)      !to order nodes in valences
+
+
+ !_____________________________
+ maxsd = 2*nelem+1      !maximum number of sides
+ ALLOCATE (ns(7,maxsd)) !auxiliar array (addmits 4 elements over one side)  FOR CHECK
+ ns = 0                 !initializes array
+ nsd = 0                !initializes number of sides
+ valence = 0            !initialices
+ e => heade             !point to first element
+ ! count appearence of each side
+ DO i=1,nelem           !for each element
+   DO ii=1,3            !for each side
+     j = e%lnods(kk(3,ii))     !internal node numeration (first node of the side)
+     k = e%lnods(kk(2,ii))     !internal node numeration (second node)
+     first = j < k             !J is the node with lower numeration
+     l = MIN(j,k)              !use the lower value
+     k = MAX(j,k)              !greater value
+     j = l                     !lower value
+     jj = 1                    !initializes pointer
+     DO                    !search in existing sides
+       IF( jj > nsd )THEN  !all sides checked ?
+         nsd = jj          !increase number of sides
+         ns(1,jj) = j      !keep side nodes
+         ns(2,jj) = k
+         ns(3,jj) = 4      !position
+         EXIT
+       ELSE IF(ns(1,jj) == j .AND. ns(2,jj) == k )THEN  !side exists
+         ns(3,jj) = ns(3,jj) + 1   !position
+         EXIT
+       END IF
+       jj = jj + 1         !next side
+     END DO
+     ! keep element and side in one value
+     l = ns(3,jj)          !position in array NS
+     IF( first )THEN   !ordered
+       ns(l,jj) =   ii+10*i    !keeps ii = side in element and i = element
+     ELSE              !reverse order
+       ns(l,jj) = -(ii+10*i)
+     END IF
+   END DO
+   e => e%next          !go to next element
+ END DO
+ ! generates data base
+ e => heade             !point to first element
+ ielem = 1              !initializes element I
+ ej => heade            !point to first element
+ jelem = 1              !initializes element J
+ nbs = 0                !initializes number of branching nodes ¿Element 14 does not include Branching?
+ err = .FALSE.
+ SELECT CASE (locax)
+ CASE (1)
+   t3 = (/ 1d0, 0d0, 0d0 /)
+ CASE (2)
+   t3 = (/ 0d0, 1d0, 0d0 /)
+ CASE (3)
+   t3 = (/ 0d0, 0d0, 1d0 /)
+ END SELECT
+ DO i=1,nsd             !for each side
+   nn = ns(3,i)-3       !number of connected elements
+   IF( nn > 2) THEN     !CHECK if a branching side and PRINT ERROR Msg
+     nbs = nbs + 1        !increase number
+
+     IF(nbs == 1)THEN   !for first branching side
+       WRITE(lures,"(' error in connectivities, more than 2 elements sharing a side (Branching)')",ERR=9999)
+       WRITE(*    ,"(' error in connectivities, more than 2 elements sharing a side (Branching)')")
+       WRITE(55   ,"(' error in connectivities, more than 2 elements sharing a side (Branching)')",ERR=9999)
+     END IF
+     WRITE(lures,"(' Side nodes: ',2i7)",ERR=9999) ns(1:2,i)    !side nodes j-k (ordered)
+     DO ii=1,nn                     !for each element on this side
+       jj = ns(ii+3,i)     !element + side
+       j = MOD(ABS(jj),10) !side
+       k = ABS(jj-j)/10    !element
+       WRITE(lures,"(i7,i3)",ERR=9999) k,j  !element and side
+     END DO
+
+   ELSE IF( nn == 2 )THEN          !standard element
+     !  first element
+     jj = ns(4,i)          !element + side
+     j = MOD(ABS(jj),10)   !side
+     k = ABS(jj-j)/10      !element
+     jjj= jj/k           !+/-1
+       !  point to element k
+     IF( k > ielem )THEN
+       n = ielem
+     ELSE
+       e => heade
+       n = 1
+     END IF
+     DO ielem=n,k-1
+       e => e%next
+     END DO
+     ! second element
+     ll = ns(5,i)          !element + side
+     j1 = MOD(ABS(ll),10)  !side1
+     k1 = ABS(ll-j1)/10    !element1
+       !  point to element k1
+     IF( k1 > jelem )THEN
+       n = jelem
+     ELSE
+       ej => heade
+       n = 1
+     END IF
+     DO jelem=n,k1-1
+       ej => ej%next
+     END DO
+     !  store information
+     IF( jjj*ll > 0 )THEN
+       IF( .NOT.err )THEN
+         WRITE(lures,"('  WARNING, non-orientated surface found ')",ERR=9999)
+         WRITE(*    ,"('  WARNING, non-orientated surface found ')")
+         WRITE(55   ,"('  WARNING, non-orientated surface found ')",ERR=9999)
+       END IF
+       WRITE(lures,"('  Elements  ',i6,' and ',i6)",ERR=9999) e%numel,ej%numel
+       e%lside(j)   = -jelem   !keep side elements
+       ej%lside(j1) = -ielem   !keep side elements
+       err = .TRUE.
+     ELSE
+       e%lside(j)  = jelem    !keep side elements
+       ej%lside(j1) = ielem   !keep side elements
+     END IF
+     e%lnods(j+3)   = ej%lnods(j1) !opposite global node
+     ej%lnods(j1+3) = e%lnods(j)   !opposite global node
+     !!!!!!!!
+     DO l=1,2
+       j = ns(l,i)
+       valence(1,j) = valence(1,j) + 1
+       jj = valence(1,j)
+       IF( jj < 9 )THEN
+          valence(jj+2,j) = ns(MOD(l,2)+1,i)
+       ELSE
+         WRITE(lures,"('  VALENCE > 8 at node ',i5)",ERR=9999) j
+         WRITE(*    ,"('  VALENCE > 8 at node ',i5)",ERR=9999) j
+         WRITE(55   ,"('  VALENCE > 8 at node ',i5)",ERR=9999) j
+       END IF
+     END DO
+   ELSE
+     DO l=1,2
+       j = ns(l,i)
+       valence(1,j) = valence(1,j) + 1
+       jj = valence(1,j)
+       IF( jj < 9 )THEN
+          valence(jj+2,j) = ns(MOD(l,2)+1,i)
+       ELSE
+         WRITE(lures,"('  VALENCE > 8 at node ',i5)",ERR=9999) j
+         WRITE(*    ,"('  VALENCE > 8 at node ',i5)",ERR=9999) j
+         WRITE(55   ,"('  VALENCE > 8 at node ',i5)",ERR=9999) j
+       END IF
+       valence(2,j) = 1  !boundary
+     END DO
+     !!!!!!!!
+   END IF
+ END DO
+ IF( nbs > 0) STOP 'branched surface not allowed'
+ DEALLOCATE (ns)
+ IF( err ) THEN !reverse connectivities found
+   ALLOCATE(ln(3,nelem),lock(nelem))
+   lock = 0
+   e => heade
+   DO i=1,nelem
+     ln(1:3,i) = e%lside(1:3)
+     e => e%next
+   END DO
+   CALL lock14(ln,1,lock,1)
+   e => heade
+   DO i=1,nelem
+     SELECT CASE (lock(i))
+     CASE (-1 ) !reverse things
+       nl = e%lnods(1:6)
+       e%lnods(1:6) = nl((/ 1,3,2,4,6,5  /))
+       e%lside(1) = ABS(ln(1,i))
+       e%lside(2) = ABS(ln(3,i))
+       e%lside(3) = ABS(ln(2,i))
+     CASE (0)
+       STOP 'element not accessed'
+     CASE (1 ) !check
+       DO j=1,3
+         IF( e%lside(j) < 0 ) e%lside(j) = -e%lside(j)
+       END DO
+     END SELECT
+     e => e%next
+   END DO
+   DEALLOCATE (ln,lock)
+ END IF
+ lside = .TRUE.              !topological array created
+ !-------------
+ DO i=1,npoin
+   j = valence(1,i)
+   IF( j == 0 )CYCLE
+   x0 = coord(:,j)
+   x(:,1:j) = coord(:,valence(3:2+j,i)) -x0
+   t1 = x(:,1)
+   CALL vecuni(3,t1,a)
+   ang(1) = 0d0
+   DO k=2,j
+     t2 = x(:,k)
+     CALL vecuni(3,t2,a)
+     co = DOT_PRODUCT(t1,t2)
+     CALL vecpro( t1,t2,t12 )
+     si = DOT_PRODUCT(t3,t12)
+     ang(k) = ATAN2(cs,si)
+   END DO
+   ! order nodes    !Check if this work
+   DO k=1,j
+     DO l=k,j
+       IF(ang(l) < ang(k))THEN
+         co = ang(k)
+         ang(k) = ang(l)
+         ang(l) = co
+         jj = valence(k+2,i)
+         valence(k+2,i) = valence(l+2,i)
+         valence(l+2,i) = jj
+       END IF
+     END DO
+   END DO
+ END DO
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE toar14
+   RECURSIVE SUBROUTINE lock14(ln,i,lock,signo)
+   !
+   IMPLICIT none
+
+     INTEGER (kind=4),INTENT(IN) ::  ln(:,:),i,signo
+     INTEGER (kind=4),INTENT(IN OUT) :: lock(:)
+     INTEGER (kind=4) :: j,k
+
+     DO j=1,3           !for each side
+       k = ln(j,i)      !side element
+       IF( k == 0 )CYCLE   !no side element cycle
+       IF( k > 0 )THEN        !side element and coincident normals
+         IF( lock(k) == 0 )THEN     !not locked
+           lock(k) = signo            !lock
+           CALL lock14(ln,k,lock,signo) !and continue
+         ELSE  !alreadky locked
+           CYCLE
+         END IF
+       ELSE
+         IF( lock(-k) == 0 )THEN     !not locked
+           lock(-k) = -signo
+           CALL lock14(ln,-k,lock,-signo) !and continue
+         ELSE  !alreadky locked
+           CYCLE
+         END IF
+       END IF
+     END DO
+
+   RETURN
+   END SUBROUTINE lock14

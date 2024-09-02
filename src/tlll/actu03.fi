@@ -1,0 +1,43 @@
+ SUBROUTINE actu03(heade)
+ IMPLICIT NONE
+ TYPE(ele03), POINTER :: heade
+
+ INTEGER (kind=4) :: isec,mtype,nlayr,l,m,osec
+
+ TYPE(ele03), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL :: plast
+
+ osec = -1
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED(e) ) EXIT
+   isec = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     mtype = sec%secdef(3)
+     plast = .FALSE.
+     IF( mtype <= 2 )plast = sec%mtbas%matdef(3) > 1
+     nlayr = sec%iprop(1)
+     osec = isec
+   END IF
+   IF( plast ) THEN   !Yield must be > zero
+     SELECT CASE (mtype)
+     CASE (0)
+       e%ehist(3) = e%ehist(1)
+       m = 0
+       DO l=1,nlayr
+         e%strap(m+1:m+5,2) = e%strap(m+1:m+5,1)
+         e%strap(m+6,2) = e%strap(m+6,2) + e%strap(m+6,1)
+         m = m + 6
+       END DO
+     CASE(1:2)
+       e%ehist(3) = e%ehist(1)
+       e%strap(:,2) = e%strap(:,1)
+     END SELECT
+   END IF
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE actu03

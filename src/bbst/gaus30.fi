@@ -1,0 +1,235 @@
+ SUBROUTINE gaus30(heade,coord,iffix,istop,gauss,angdf,locax)
+ !-------------------------------------------------------------------
+ !--- evaluates gauss points constants for shell element 14
+ !--------------------------------------------------------------------
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(IN) :: iffix(:)
+ INTEGER (kind=4), INTENT(OUT) :: istop
+ REAL (kind=8), INTENT(IN) :: coord(:,:), & !initial coordinates
+                              angdf         !default angle X_1 - Ort_1
+ TYPE (ele30), POINTER :: heade   !pointer to first element in the set
+ LOGICAL, INTENT (IN OUT) :: gauss    !TRUE if initial constant exists
+ INTEGER(kind=4), INTENT (IN) :: locax      ! local axis
+
+ INTEGER (kind=4) i,j,k,m,n
+ REAL (kind=8) x(3,12),stra0(6),t(3,2),t3(3),h(3,3),tns(3,3)
+ REAL (kind=8) sfd(6,2,3),psg(2,3),sf(6)
+ REAL (kind=8) angle,factor
+ TYPE (ele30), POINTER :: e
+ LOGICAL :: bounc(6)
+
+ !     ---------------------------------------------------------
+ psg(:,1) = (/ 0.5d0, 0.5D0 /)
+ psg(:,2) = (/   0d0, 0.5d0 /)
+ psg(:,3) = (/ 0.5d0,   0d0 /)
+ DO i=1,3
+   CALL shape7(psg(1,i),psg(2,i),sf,sfd(:,:,i))
+ END DO
+ !     ---------------------------------------------------------
+ ! compute standard butterfly coefficients
+ CALL butterfly
+ !     ---------------------------------------------------------
+ factor = ASIN(1d0)/90d0         !pi/180
+ e => heade       !point to first element
+ DO               !loop over the elements in the set
+   IF (.NOT.ASSOCIATED (e) ) EXIT  !if all element processed, exit
+   k = 7
+   DO i=1,3   !for each vertex
+     n = e%lnods(i)                !node number
+     x(:,i) = coord(:,n)           !get original coordinates
+     bounc(i) = iffix(n) == 1      !.TRUE. = clamped
+     m =i+3                        !opposite node in first ring
+     n = e%lnods(m)                !node number
+     IF(n /= 0) THEN               !if node exist
+       x(:,m) = coord(:,n)         !get original coordinates
+       bounc(m) = iffix(n) == 1      !.TRUE. = clamped
+     ELSE
+       x(:,m) = 0d0                ! null values
+       bounc(m) = .FALSE.          !.TRUE. = clamped
+     END IF
+     DO j =k,k+1                   !for all nodes in the patch
+       n = e%lnods(j)                !node number
+       IF(n /= 0) THEN               !if node exist
+         x(:,j) = coord(:,n)         !get original coordinates
+       ELSE
+         x(:,j) = 0d0                ! null values
+      END IF
+     END DO
+     k=k+2
+   END DO
+   IF(.NOT.gauss)THEN    !Compute initial constants if requested
+     ! compute element local systems, side proyections and element areas
+     angle = ( angdf + e%angle )*factor
+     CALL axep30(e%numel,x,e%a,e%b,e%area1,angle,locax,e%bcode,e%nab,bounc,sfd,e%cdn)
+     ! compute second fundamental form of the undeformed structure
+     CALL stra30(e%numel,e%a,e%b,e%cdn,x,t3,t,tns,h,e%bcode,bounc,e%nab,stra0,e%lb)
+     e%stra0 = stra0(4:6)      !keep original curvatures
+     !WRITE(58,"(i5,3e12.4,i4)")e%numel,stra0(4:6),e%bcode
+
+   END IF
+   e => e%next          !point to next element
+ END DO
+ gauss = .TRUE.
+
+ RETURN
+ END SUBROUTINE gaus30
+
+!------------------------------------------------------------------------------------------
+
+ SUBROUTINE butterfly
+ ! compute coefficientes for butterfly scheme
+ !     also compute A-matrix for regular inner nodes
+ !     also compute A-matrix for boundary nodes
+ IMPLICIT NONE
+
+ REAL(kind=8) :: c2,c4,c8,cc1,cc2,cc3
+ INTEGER(kind=4) :: i,j,k,l,m,n
+ ! butterfly scheme for six node element
+ c2 = 1d0/DBLE(2)    !  8/16
+ c4 = 1d0/DBLE(8)    !  2/16
+ c8 =-1d0/DBLE(16)   ! -1/16
+ ar = RESHAPE((/ 1d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, &
+                 0d0, 1d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, &
+                 0d0, 0d0, 1d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, &
+                  c4,  c2,  c2,  c4,  c8,  c8,  c8,  c8, 0d0, 0d0, 0d0, 0d0, &
+                  c2,  c4,  c2,  c8,  c4,  c8, 0d0, 0d0,  c8,  c8, 0d0, 0d0, &
+                  c2,  c2,  c4,  c8,  c8,  c4, 0d0, 0d0, 0d0, 0d0,  c8,  c8  /),(/12,6/))
+
+ cc1= 3d0/8d0     !left node
+ cc2= 6d0/8d0     !right node
+ cc3=-1d0/8d0     !most right node
+ ! boundary case 1
+ mb( :,:,1) = ar
+ mb( 1,:,1) = mb( 1,:,1)+mb(10,:,1)+mb(11,:,1)
+ mb( 2,:,1) = mb( 2,:,1)           -mb(11,:,1)
+ mb( 3,:,1) = mb( 3,:,1)-mb(10,:,1)
+ mb( 5,:,1) = mb( 5,:,1)+mb(10,:,1)
+ mb( 6,:,1) = mb( 6,:,1)           +mb(11,:,1)
+ mb(10,:,1) = 0d0
+ mb(11,:,1) = 0d0
+
+ ! boundary case 2
+ mb( :,:,2) = ar
+ mb( 1,:,2) = mb( 1,:,2)           +mb(10,:,2)+mb(11,:,2)-mb(12,:,2)
+ mb( 2,:,2) = mb( 2,:,2)+mb( 7,:,2)           -mb(11,:,2)+mb(12,:,2)
+ mb( 3,:,2) = mb( 3,:,2)-mb( 7,:,2)-mb(10,:,2)
+ mb( 4,:,2) = mb( 4,:,2)+mb( 7,:,2)
+ mb( 5,:,2) = mb( 5,:,2)           +mb(10,:,2)
+ mb( 6,:,2) = mb( 6,:,2)                      +mb(11,:,2)+mb(12,:,2)
+ mb( 7,:,2) = 0d0
+ mb(10,:,2) = 0d0
+ mb(11,:,2) = 0d0
+ mb(12,:,2) = 0d0
+
+ ! boundary case 3
+ mb( :,:,3) = ar
+ mb( 1,:,3) = mb( 1,:,3)+mb( 6,:,3)
+ mb( 2,:,3) = mb( 2,:,3)+mb( 6,:,3)
+ mb( 3,:,3) = mb( 3,:,3)-mb( 6,:,3)
+ mb( 6,:,3) = 0d0
+ mb(11,:,3) = 0d0
+ mb(12,:,3) = 0d0
+
+ mb( :,6,3) = 0d0
+ mb( 1,6,3) = 9d0/16d0; mb( 2,6,3)= 9d0/16d0; mb( 7,6,3)= c8; mb(10,6,3)= c8;
+
+ ! boundary case 4
+ mb( :,:,4) = ar
+ mb( 1,:,4) = mb( 1,:,4)+mb( 6,:,4)+mb(10,:,4)
+ mb( 2,:,4) = mb( 2,:,4)+mb( 6,:,4)
+ mb( 3,:,4) = mb( 3,:,4)-mb( 6,:,4)-mb(10,:,4)
+ mb( 5,:,4) = mb( 5,:,4)           +mb(10,:,4)
+ mb( 6,:,4) = 0d0
+ mb(10,:,4) = 0d0
+ mb(11,:,4) = 0d0
+ mb(12,:,4) = 0d0
+
+ mb( :,6,4) = 0d0
+ mb( 1,6,4)= cc1; mb( 2,6,4)= cc2; mb( 7,6,4)= cc3;     !quadratic
+! mb( 1,6,4)= c2; mb( 2,6,4)= 9d0/16d0; mb( 3,6,4)=-c8; mb( 5,6,4)= c8; mb( 7,6,4)= c8; !cubic
+
+ ! boundary case 5
+ mb( :,:,5) = ar
+ mb( 1,:,5) = mb( 1,:,5)+mb( 6,:,5)
+ mb( 2,:,5) = mb( 2,:,5)+mb( 6,:,5)+mb( 7,:,5)
+ mb( 3,:,5) = mb( 3,:,5)-mb( 6,:,5)-mb( 7,:,5)
+ mb( 4,:,5) = mb( 4,:,5)           +mb( 7,:,5)
+ mb( 6,:,5) = 0d0
+ mb( 7,:,5) = 0d0
+ mb(11,:,5) = 0d0
+ mb(12,:,5) = 0d0
+
+ mb( :,6,5) = 0d0
+ mb( 1,6,5)= cc2; mb( 2,6,5)= cc1; mb(10,6,5)= cc3;  !quadratic
+! mb( 1,6,5)= 9d0/16d0; mb( 2,6,5)= c2; mb( 3,6,5)=-c8; mb( 4,6,5)= c8; mb(10,6,5)= c8;  !cubic
+
+ ! boundary case 6
+ mb( :,:,6) = ar
+ mb( 1,:,6) = mb( 1,:,6)+mb( 5,:,6)+mb( 6,:,6) ! +mb(10,:,6)*2d0+mb(11,:,6)*2d0
+ mb( 2,:,6) = mb( 2,:,6)-mb( 5,:,6)+mb( 6,:,6) ! -mb(10,:,6)
+ mb( 3,:,6) = mb( 3,:,6)+mb( 5,:,6)-mb( 6,:,6) !                -mb(11,:,6)
+ mb( 5,:,6) = 0d0
+ mb( 6,:,6) = 0d0
+ mb( 9,:,6) = 0d0
+ mb(10,:,6) = 0d0
+ mb(11,:,6) = 0d0
+ mb(12,:,6) = 0d0
+
+ mb( :,5:6,6) = 0d0
+ mb( 1,5,6)= cc1; mb( 3,5,6)= cc2; mb( 8,5,6)= cc3  !quadratic
+ mb( 1,6,6)= cc1; mb( 2,6,6)= cc2; mb( 7,6,6)= cc3  !quadratic
+! mb( 1,5,6)=11d0/16d0; mb( 3,5,6)= c2; mb( 8,5,6)=c8  !cubic
+! mb( 1,6,6)= 9d0/16d0; mb( 2,6,6)= c2; mb( 7,6,6)=c8  !cubic
+
+ areg = 0d0    !initializes
+ abou = 0d0    !initializes
+ DO i=1,12      !for each node in the extended patch
+   DO j=1,6       !for each node in the quadratic element
+     k = 3*(i-1)    !position "before" in row
+     l = 3*(j-1)    !position "before" in column
+     DO m=1,3         !for each dof (dimension)
+       k=k+1            !row
+       l=l+1            !column
+       areg(k,l) = ar(i,j)        !pass value from ar
+       DO n=1,6         !for each boundary case
+         abou(k,l,n) = mb(i,j,n)  !pass value from mb
+       END DO
+     END DO
+   END DO
+ END DO
+
+ RETURN
+ END SUBROUTINE butterfly
+
+SUBROUTINE shape7(a2,a3,shape,deriv)
+ !shape derivatives, where mid-side points are opposite to nodes
+ ! a1= zeta a2= xita  a3= eta
+ IMPLICIT NONE
+ REAL (kind=8) a2,a3,shape(6),deriv(6,2)
+ REAL (kind=8) a1
+
+ a1 = 1d0-a2-a3  !zeta coordinate
+
+ shape(1) = (2d0*a1-1d0)*a1
+ shape(2) = (2d0*a2-1d0)*a2
+ shape(3) = (2d0*a3-1d0)*a3
+ shape(4) = 4d0*a2*a3            !on opposite side to node 1
+ shape(5) = 4d0*a1*a3            !on opposite side to node 2
+ shape(6) = 4d0*a1*a2            !on opposite side to node 3
+ ! xita(a2) derivatives
+ deriv(1,1) =-(4d0*a1-1d0)
+ deriv(2,1) =  4d0*a2-1d0
+ deriv(3,1) =  0d0
+ deriv(4,1) =  4d0*a3
+ deriv(5,1) = -4d0*a3
+ deriv(6,1) =  4d0*(a1-a2)
+
+ deriv(1,2) =-(4d0*a1-1d0)
+ deriv(2,2) =  0d0
+ deriv(3,2) =  4d0*a3-1d0
+ deriv(4,2) =  4d0*a2
+ deriv(5,2) =  4d0*(a1-a3)
+ deriv(6,2) = -4d0*a2
+ RETURN
+ END SUBROUTINE shape7

@@ -1,0 +1,483 @@
+ SUBROUTINE stif24(heade, coora, gstif, force, logst, stint, iffix)
+
+ ! computes stiffness matrix for element NBST with mat-type = 4
+ USE npo_db, ONLY : ifpre
+ USE kinc_db, ONLY : npsdf,ftsdf,nn
+ USE ift_db, ONLY : npret,prtmp
+  IMPLICIT NONE
+                               !--------- to optimize ---------
+ INTEGER (kind=4), PARAMETER :: ndime =3, nnode = 3
+ LOGICAL, INTENT(IN) :: logst !large strain
+ REAL (kind=8), INTENT(IN) :: coora(:,:)      !present coordinates
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:), & !global stiffness matrix
+                                  force(:)    !global force vector (prescribe displacements)
+ TYPE (ele24), POINTER :: heade               !pointer to first element
+ REAL(kind=8), POINTER :: stint(:,:)       !moments and shear
+ INTEGER (kind=4), INTENT(IN) :: iffix(:)
+ !Local Variables
+
+ TYPE (ele24), POINTER :: e      !pointer to an element
+ TYPE (sideb), POINTER :: si     !pointer to branching side
+
+ LOGICAL :: isidf(3), & !if sides clamped
+            noside,   & !a node on a side exists
+            mti,      & !to recompute data
+            branch      !a branching side exists
+
+ INTEGER (kind=4) :: sides(3),pos(3),  & !if sides exist
+                     nbn,nbo,          & !number of nodes for branching element
+                     nvarl,            & !number of DOFs
+                     lnb(18)             !patch connectivities
+
+ REAL (kind=8) bmat(3,6,6),& !bending B matrix
+               x(3,6),     & !nodal coordinates of the patch
+               t(3,15),    & !local in-plane vector at sides elms
+               fc(2,3)       !factors for nodes on sides
+
+ REAL (kind=8), POINTER :: bb(:,:,:),   & !(3,nbn,3)  curvatures B matrix
+                           stiff(:)       !171 = nvarl*(nvarl+1)/2 stiffness matrix
+
+! LOGICAL :: pflag     ! TRUE if plastic flow in the step
+
+ LOGICAL :: newmt,   &! TRUE if material constant computation necessary
+            found,   &! TRUE if section exists
+            elast,   &! TRUE if material is strictly elastic
+            shell,   &! TRUE if bending included
+            sttmp     ! TRUE if incremental temperature strains
+
+
+ INTEGER (kind=4) ielem,    & !element number
+                  i,j,k,n,l,jn,kn,error !different indexes
+
+ INTEGER (kind=4) isec,  & !associated material
+                  nlayr, & !number of layers
+                  nyoung,nnu,nalpha,numpt, & !number of points in curve
+                  osec,  & !associated material of previous element
+                  nvar     !number of internal variables per layer
+
+ REAL (kind=8) stran(3),  & !C=U^2  also Log strains
+               stres(3),sigma(3),  & !layer stresses or t.t.t integrated stresses (forces)
+               stra1(6),  & !first and second fundamental forms
+               u2(3),     & !C^-1
+               lb(3),r1,r2, & !eigenvalues
+               thnew,     & !present thickness
+               zk,zk2,    & !distance to mid surface
+               aux,       & !auxiliar value
+               voli,area1,& !volume and area element
+               t0,t1,t2,j0,  & !thermical dilatation coeff
+               q0,q1,q2,k0,  & !thermical dilatation coeff
+               stret(6),ft(3,6)
+
+ REAL (kind=8) thick,     & !thickness (original)
+               young,nu,vm,  & !elastic constants
+               alpha,     & !thermical dilatation coeff
+               c(4),      & !Elastic constitutive matrix for plane stress
+               dm(21),    & !Elastic integrated constitutive matrix
+               dmatx(6,6), &
+               daux(21),   &
+               cm(3,3),    &
+               d(3,3) !,     &
+
+ ! Gauss points throught the thickness
+ REAL (kind=8) :: thf(7),wei(7)
+
+ TYPE (curve), POINTER :: cyoung,cnu,calpha             !pointers to different curves
+ REAL (kind=8), ALLOCATABLE :: varin(:)                 !internal variables
+
+ TYPE (section), POINTER :: sec    !pointer to a section data
+ TYPE (mater), POINTER :: mat    !pointer to a section data
+
+ !***  Compute Element Stiffness matrix for all elements
+
+ nbo = 6              !number of nodes in the patch
+ nvarl = nbo*ndime    !number of DOFs in the patch
+ ALLOCATE( stiff(nvarl*(nvarl+1)/2), bb(ndime,nbo,6) )      !stiffness and B matrices
+ d = 0d0
+ osec = -1            !initializes secions
+ e => heade           !point to first element
+ ielem = 0
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = ielem + 1                 !element order
+   isec  = e%matno                   !associated material
+   newmt = osec /= isec              !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+
+     ! Get material and section parameters
+     !
+     ! Uses the following variables
+
+     sec => psecs(isec)%p             !point to section
+     nlayr = sec%iprop(1)             !number of layers
+     nvar  = sec%iprop(2)             !number of internal variables per layer
+     IF( nvar > 0 )THEN
+       ALLOCATE(varin(nvar))            !auxiliar internal variables
+       varin = 0d0                      !initializes
+     END IF
+     thick = sec%rprop(1)             !original thickness
+     osec = isec                      !keep present section
+     mat => sec%mtbas                 !point to associated material
+     shell = nlayr > 1                !membrane or shell
+     elast = mat%matdef(3) == 1       !elastic
+     CALL gaussq(nlayr,thf(1),wei(1)) !integration points through the thickness
+     thf(1:nlayr) = thf(1:nlayr)/2d0  !positions
+     wei(1:nlayr) = wei(1:nlayr)/2d0  !weights
+     young = mat%prope(1)             !young modulus
+     nu = mat%prope(2)                !poisson ratio
+     alpha = mat%prope(6)/3d0         !Thermical Dilatation Coeff (/3 because used with 3 nodes)
+     nyoung= INT(sec%mtbas%props(1))  !associated curve for Young modulus
+     nnu   = INT(sec%mtbas%props(2))  !associated curve for Young modulus
+     nalpha= INT(sec%mtbas%props(6))  !associated curve for alpha
+     numpt = nyoung+nu+nalpha
+     IF( nyoung > 0 ) CALL cur_point( nyoung,sec%mtbas%chead,cyoung) !point to the curve
+     IF( nnu    > 0 ) CALL cur_point( nnu   ,sec%mtbas%chead,cnu   ) !point to the curve
+     IF( nalpha > 0 ) CALL cur_point( nalpha,sec%mtbas%chead,calpha) !point to the curve
+     dm      = 0d0                    !initializes integrated elasticity matrix
+     dm((/1,2,7,12,16,17,19,21/)) = sec%rprop(5:12)        !integrated elasticity matrix
+     c(1:4) = mat%prope(10:13)          ! plane stress elasticity matrix
+     d(1,1) = c(1)
+     d(1,2) = c(2)
+     d(2,2) = c(3)
+     d(3,3) = c(4)
+   END IF
+
+   ! compute thermal dependant properties
+   lb(1) = SUM(tempe(1,e%lnods(1:3)))                  !average temperature (center or bottom)
+   IF(ndoft > 1) lb(2) = SUM(tempe(2,e%lnods(1:3)))    !average temperature (bottom or top)
+   IF( numpt > 0 )THEN !temperature dependant properties
+     ! temperature at element center (middle surface)
+     aux = lb(1)/3d0   !average temperature
+     IF( lb(1) /= 0d0 )THEN
+       i = 1
+       IF( nyoung > 0 .OR. nnu > 0 ) THEN
+         IF( nyoung > 0 ) young = inte_cr(cyoung%val,nyoung,aux,i)
+         IF( nnu    > 0 ) nu    = inte_cr(cnu%val   ,nnu   ,aux,i)
+         ! plane stress elasticity matrix
+         vm = 1d0-nu*nu
+         c(1) = young/vm
+         c(2) = c(1)*nu
+         c(3) = c(1)
+         c(4) = young/(2d0*(1d0+nu))
+         d(1,1) = c(1)
+         d(1,2) = c(2)
+         d(2,2) = c(3)
+         d(3,3) = c(4)
+       END IF
+       IF( nalpha > 0 ) alpha = inte_cr(calpha%val,nalpha,aux,i)/3d0     !alpha/3
+     END IF
+   END IF
+
+   !*** computes actual configuration
+   noside = .FALSE.                   !default
+   branch = ANY(e%lnods(4:6) < 0 )    !a branching side exists
+   IF( branch )THEN
+     nbn = 3                     !main triangle nodes
+     lnb(1:3) = e%lnods(1:3)     !first three nodes
+   ELSE
+     nbn = 6                     !standard 6-node patch
+     lnb(1:6) = e%lnods(1:6)     !pass the nodes
+   END IF
+   area1 = e%area1         !area of main element
+   x(1:3,1:3) = coora(1:3,e%lnods(1:3))   !nodes of main element
+   pos = (/ 1,2,3 /)       !initializes
+
+   u2 = 0d0
+   sttmp = .FALSE.
+   DO n=1,3             !for each side
+     i = n+3            !opposite position
+     l = e%lnods(i)     !opposite node
+     IF( l > 0 ) THEN    !opposite node exists
+       sides(n) = 1     !adjacent side exists
+       x(1:3,i) = coora(1:3,l)                !coordinates of node
+       IF(branch)THEN    !add node to list
+         nbn = nbn + 1   !update pointer
+         lnb(nbn) = l    !add node
+         pos(n) = nbn - 3
+       END IF
+     ELSE IF( l == 0 )THEN     !boundary side
+       sides(n) = 0     !no adjacent side
+       j = e%lnods(hh(3,n))   !node j (global)
+       k = e%lnods(hh(2,n))   !node k (global)
+       isidf(n) = ( iffix(j) /= 0 .AND. iffix(k) /= 0 )  !clamped side ?
+       IF( iffix(j) < 0 .AND. iffix(k) < 0 )THEN !node on a side
+         jn = hh(3,n)
+         kn = hh(2,n)
+         l = -iffix(j)  !compute position of the i+1 node
+         lnb(jn)   = nndpd(2,l)    !lower node
+         lnb(jn+6) = nndpd(3,l)    !upper node
+         l  = npsdf(-ifpre(1,j))        !first position
+         fc(1,jn) = ftsdf(l)       !factor
+         fc(2,jn) = 1d0-ftsdf(l)   !factor
+         l = -iffix(k)  !compute position of the i+2 node
+         lnb(kn)   = nndpd(2,l)    !lower node
+         lnb(kn+6) = nndpd(3,l)    !upper node
+         l  = npsdf(-ifpre(1,k))        !first position
+         fc(1,kn) = ftsdf(l)       !factor
+         fc(2,kn) = 1d0-ftsdf(l)   !factor
+         t(:,1:4) =  coora(:, lnb((/ jn,jn+6,kn+6,kn /)))    !node 1 - 4
+         t(:,5) = -t(:,1)+t(:,2)+t(:,3)-t(:,4) !phi,xita
+         t(:,6) = x(:,kn)-x(:,jn)    !side vector
+         CALL vecpro(t(1,5),t(1,6),x(1,i)) !outward normal vector
+         CALL vecuni(3,x(1,i),aux)          !unit normal to the quad
+         sides(n) = 2              !side element is solid
+         noside = .TRUE.
+         nbn = 9                   !1 or 2 sides on solids
+       ELSE
+         x(1:3,i) = 0d0          !null values (unnecessary perhaps)
+         sides(n) = 0             ! side does NOT exists
+       END IF
+     ELSE !IF( l < 0 )THEN !branching side
+       sides(n) = -1   !side element is a branching side
+       j = -l     !position in side conns
+       si => e%si(n)%p       !keep a pointer to the branching side
+       ! generate connectivities for enlarged B matrix
+       k = nbn + 1           !update new first position
+       nbn = nbn + si%nn-1   !new last position
+       lnb(k:nbn) = (/ ABS(si%lnods(1:j-1)), ABS(si%lnods(j+1:si%nn)) /)
+     END IF
+     IF( npret > 0 )THEN  !If prescribed temperatures
+       DO i=1,ndoft         !for each thermal DOF
+         l = e%lnods(n)     !opposite node
+         k = iftmp(i,l)     !pseudo position in array prtmp
+         IF(k < -nn) u2(i) = u2(i) + prtmp(-k-nn,npret+1)  !prescribed temperature velocity
+       END DO
+     END IF
+   END DO
+   IF( nbn /= nbo )THEN      !if size of matrices changed
+     DEALLOCATE( stiff, bb ) !release memory
+     nvarl = nbn*ndime       !new number of DOFs
+     ALLOCATE( stiff(nvarl*(nvarl+1)/2), bb(ndime,nbn,6) )  !get memory
+     nbo = nbn               !new size
+   END IF
+
+   stra1 = e%stra1     ! Metric tensors
+   ! local system & normals => t
+   CALL stra24(e%a,e%b,e%c,e%cd,e%ci,e%a0,e%area1,t,e%lb,x,sides,isidf,e%mems)
+
+   ! consider thermal strains
+   IF( alpha > 0 )THEN              ! compute coefficients for J(temp) evaluation
+     SELECT CASE (ndoft)
+     CASE (1)                         !constant
+       t0 = 1d0+alpha*lb(1)              ! T0
+       t1 = 0d0
+       t2 = 0d0
+       q0 = 1d0+alpha*u2(1)              ! T0 velocity
+       q1 = 0d0
+       q2 = 0d0
+     CASE (2)                         !linear
+       t0 = 1d0+alpha*( lb(1)+lb(2))/2d0 ! T0
+       t1 =     alpha*(-lb(1)+lb(2))     ! T1
+       t2 = 0d0
+       q0 = 1d0+alpha*( u2(1)+u2(2))/2d0 ! T0
+       q1 =     alpha*(-u2(1)+u2(2))     ! T1
+       q2 = 0d0
+     CASE (3)                         !quadratic
+       lb(3) = SUM(tempe(3,e%lnods(1:3)))
+       t0 = 1d0+alpha*lb(1)                         ! T0
+       t1 =     alpha*(          -lb(2)+lb(3))      ! T1
+       t2 =     alpha*(-2d0*lb(1)+lb(2)+lb(3))*2d0  ! T2
+       q0 = 1d0+alpha*u2(1)                         ! T0
+       q1 =     alpha*(          -u2(2)+u2(3))      ! T1
+       q2 =     alpha*(-2d0*u2(1)+u2(2)+u2(3))*2d0  ! T2
+     END SELECT
+     e%lb = e%lb*t0**3     ! modify thickness ratio including thermal expansion
+     sttmp = ( q0 /= 0d0 .OR. q1 /= 0d0 .OR. q2 /= 0d0 )  !if temperature increment is detected
+   END IF
+   ! arrays LB & U2 released after this to be used as eigenvalues and C^-1
+
+   thnew = thick*e%lb             !thickness at new configuration
+
+   ! compute elasticity matrix
+   IF( sttmp ) stret = 0d0             ! thermical stresses
+   IF( .FALSE. )THEN   !integrate through the thickness
+
+     dmatx = 0d0                         ! Initializes D matrix
+
+     DO l=1,nlayr                        ! for each layer
+       zk = thf(l)*thnew                 ! Z coordinate
+       zk2 = zk*zk                       ! Z coord squared
+       stran = stra1(1:3)+stra1(4:6)*zk  ! layer U^2
+       IF( logst )THEN           !large strain (modify using the metric tensor)
+         ! inverse of U^2
+         aux  = (stran(1)*stran(2)-stran(3)**2)
+         u2(1) = stran(2)/aux
+         u2(2) = stran(1)/aux
+         u2(3) = -stran(3)/aux
+
+         cm(1,1) = d(1,1)*u2(1)*u2(1) + 2d0*d(1,3)*u2(1)*u2(3) &
+                 + d(3,3)*u2(3)*u2(3)
+
+         cm(1,2) = d(1,3)*u2(1)*u2(3) + d(1,2)*u2(1)*u2(2)     &
+                 + d(3,3)*u2(3)*u2(3) + d(2,3)*u2(3)*u2(2)
+
+         cm(1,3) = ( d(1,1)*u2(1)*u2(3) + d(1,2)*u2(1)*u2(3)   &
+                 + d(1,3)*( u2(1)*u2(1) + u2(1)*u2(2) + u2(3)*u2(3) )   &
+                 + d(2,3)*u2(3)*u2(3)                                   &
+                 + d(3,3)*( u2(1)*u2(3) + u2(2)*u2(3) ) )/2d0
+
+         cm(2,2) = d(2,2)*u2(2)*u2(2) + 2d0*d(2,3)*u2(2)*u2(3) &
+                 + d(3,3)*u2(3)*u2(3)
+
+         cm(2,3) = ( d(1,2)*u2(2)*u2(3) + d(1,3)*u2(3)*u2(3)   &
+                 + d(2,2)*u2(2)*u2(3)                                   &
+                 + d(2,3)*( u2(1)*u2(2) + u2(2)*u2(2) +u2(3)*u2(3) )    &
+                 + d(3,3)*( u2(1)*u2(3) + u2(2)*u2(3) ) )/2d0
+
+         cm(3,3) = (d(3,3)*(u2(1)*u2(1)                        &
+                 + 2d0*u2(1)*u2(2)+u2(2)*u2(2))                         &
+                 + d(1,1)*u2(3)*u2(3) + 2d0*d(1,2)*u2(3)*u2(3)          &
+                 + 2d0*d(1,3)*( u2(1)*u2(3) + u2(2)*u2(3) )             &
+                 + d(2,2)*u2(3)*u2(3)                                   &
+                 + 2d0*d(2,3)*( u2(1)*u2(3) + u2(2)*u2(3) ) )/4d0
+         IF( sttmp ) THEN
+           j0 = (q0 + zk*q1 + zk*zk*q2)**2d0          !modifies fiber length (squared) due to temperature
+           u2 = stran/j0                              !modifies C excluding thermal expansion
+           CALL lgst14(u2,r1,r2,lb,'RESVPL',error)    !Hencky (logarithmic) strains
+           CALL lgst14(stran,r1,r2,lb,'RESVPL',error)    !Hencky (logarithmic) strains
+           u2 =  u2 - stran                           !incremental strains
+           stres(1) = c(1)*u2(1) + c(2)*u2(2)
+           stres(2) = c(2)*u2(1) + c(3)*u2(2)
+           stres(3) = c(4)*u2(3)
+           sigma(1) = stres(1)*r1*r1+stres(2)*r2*r2+2d0*stres(3)*r1*r2
+           sigma(2) = stres(1)*r2*r2+stres(2)*r1*r1-2d0*stres(3)*r1*r2
+           sigma(3) =(stres(2)-stres(1))*r1*r2+stres(3)*(r1*r1-r2*r2)
+           ! Computes 2nd P-K stress on the natural Frame
+           stres(1) = sigma(1)/lb(1)**2
+           stres(2) = sigma(2)/lb(2)**2
+           IF( ABS(lb(1)-lb(2)) > 1.d-6)THEN   !lb(1) /= lb(2)
+             stres(3) = sigma(3)*2d0*LOG(lb(1)/lb(2))/(lb(1)**2-lb(2)**2)
+           ELSE                                !lb(1) = lb(2)
+             stres(3) = sigma(3)/lb(1)/lb(2)
+           END IF
+           ! Computes 2nd P-K on the Lagrangian Frame
+           sigma(1) = stres(1)*r1*r1+stres(2)*r2*r2-2d0*stres(3)*r1*r2
+           sigma(2) = stres(1)*r2*r2+stres(2)*r1*r1+2d0*stres(3)*r1*r2
+           sigma(3) =(stres(1)-stres(2))*r1*r2+stres(3)*(r1*r1-r2*r2)
+           stret(1:3) = stret(1:3)+sigma*wei(l)     !t.t.t. integrated forces
+           stret(4:6) = stret(4:6)+sigma*zk*wei(l)  !integrated moments
+         END IF
+
+       ELSE      !small strain
+         cm      = d
+         IF( sttmp ) THEN
+           j0 = -(q0-1d0 + zk*q1 + zk*zk*q2)           !modifies fiber length due to temperature
+           stres(1) = (c(1)+c(2))*j0
+           stret(1:2) = stret(1:2)+stres(1)*wei(l)     !t.t.t. integrated forces
+           stret(4:5) = stret(4:5)+stres(1)*zk*wei(l)  !integrated moments
+         END IF
+       END IF
+
+       cm = cm*wei(l)
+       DO i=1,3
+         DO j=i,3
+           dmatx(i,j)     = dmatx(i,j)     + cm(i,j)
+           dmatx(i,j+3)   = dmatx(i,j+3)   + cm(i,j)*zk
+           dmatx(i+3,j+3) = dmatx(i+3,j+3) + cm(i,j)*zk2
+         END DO
+       END DO
+     END DO
+     IF( sttmp ) THEN
+       stret(1:6) = stret(1:6)*thick*area1            !Original thick because it's TLF
+       stret(1:3) = stret(1:3)/3d0                    !Bmem includes 3
+     END IF
+     dmatx(2,4) = dmatx(1,5)
+     dmatx(3,4) = dmatx(1,6)
+     dmatx(3,5) = dmatx(2,6)
+
+     voli = area1*thick   ! Initial Vol
+     k = 0
+     DO i=1,6
+       DO j=i,6
+         k = k+1
+         daux(k) = voli*dmatx(i,j)
+       END DO
+     END DO
+
+   ELSE     !use elastic integrated matrix
+     dm((/ 1, 2, 7,12/)) = c*thick        !integrated elasticity matrix
+     dm((/16,17,19,21/)) = dm((/ 1, 2, 7,12/))*thnew**2/12  !thickness is new value
+     daux = dm*area1
+     IF( sttmp ) THEN
+       j0 = 1d0-q0                                 !mid-surface fiber length change due to temperature
+       stret(1:2) = (dm(1)+dm(2))*j0/3d0*area1           !integrated forces
+       stret(4:5) = -(dm(16)+dm(17))*q1*area1            !integrated moments
+     END IF
+   END IF
+
+   stiff = 0d0          !initializes STIFF
+   ! modify dmatx to include 3 membrane B matrix
+   daux(1:15)= daux(1:15)/3d0
+   daux(1:3) = daux(1: 3)/3d0
+   daux(7:8) = daux(7: 8)/3d0
+   daux(12)  = daux(12)  /3d0
+   ! membrane part (linear strain triangle)
+   CALL bmem24(e%a,e%b,e%cd,e%a0,e%gamma,bmat(:,:,1:3),t,e%mems)
+   CALL bfle24(e%a,e%b,e%c,e%ci,sides,isidf,bmat(:,:,4:6),t(:,1:9))
+   IF( noside )THEN  !if there are nodes on solid sides
+     bb(:,1:6,1:6) = bmat(:,:,1:6)
+     DO i=1,3
+       IF(e%lnods(i) == lnb(i)) CYCLE
+       bb(:,i,1:6)   = bmat(:,i,1:6)*fc(1,i)
+       bb(:,i+6,1:6) = bmat(:,i,1:6)*fc(2,i)
+     END DO
+   END IF
+   ! bending part
+   IF( branch )THEN    !if a branching side exists
+     CALL bbra24(bmat,e%lb,sides,nbn,e%si,bb,e%lnods(4:6))
+     CALL btdbpr(bb(1,1,1),daux(1),stiff(1),nvarl,6)
+   ELSE IF( noside )THEN  !if there are nodes on solid sides
+     mti = .FALSE.
+     DO i=3,1,-1
+       IF(sides(i) /= 2) CYCLE
+       jn = hh(3,i)
+       kn = hh(2,i)
+       IF( mti )THEN !recompute LNA and normal
+         t(:,1:4) =  coora(:, lnb((/ jn,jn+6,kn+6,kn /)))    !node 1 - 4
+         t(:,5) = -t(:,1)+t(:,2)+t(:,3)-t(:,4) !phi,xita
+       END IF
+       CALL vecuni(3,t(:,5),aux)      ! aux = 2 h
+       l = i+3
+       bb(:,jn,4:6)   = bb(:,jn,4:6)    -bb(:,l,4:6)/aux !node 1
+       bb(:,jn+3,4:6) = bb(:,jn+3,4:6)  +bb(:,l,4:6)/aux !node 2
+       bb(:,kn+3,4:6) = bb(:,kn+3,4:6)  +bb(:,l,4:6)/aux !node 3
+       bb(:,kn,4:6)   = bb(:,kn,4:6)    -bb(:,l,4:6)/aux !node 4
+       bb(:,l,:) = 0d0  !null values associated to auxiliar node
+       mti = .TRUE.  ! to update solid data
+     END DO
+     CALL btdbpr(bb(1,1,1),daux(1),stiff(1),nvarl,6)
+   ELSE !standard element
+     CALL btdbpr(bmat(1,1,1),daux(1),stiff(1),nvarl,6)
+     IF( sttmp ) CALL proma3 (ft(1,1),bmat(1,1,1),stret(1),nvarl,6,.TRUE.)
+   END IF
+   ! geometric stiffness due to membrane part
+   stres = stint(1:3,ielem)*area1/3d0
+   IF( noside )THEN !not solved yet
+   ELSE
+     DO i=1,3
+       IF( sides(i) > 0 )THEN
+         aux = ABS(e%a0(i)+2d0*e%gamma(i))  !angle at boundary
+         IF( aux <= alp1 )THEN              !smooth  use side (quadratic) metric tensor
+           aux = 0d0
+         ELSE IF( aux >= alp2 )THEN         !kink use element (linear) metric tensor
+           aux = 1d0
+         ELSE
+           aux = (aux-alp1)/alp3            !transition
+         END IF
+       ELSE
+         aux = 1d0                          !boundary use element (linear) metric tensor
+       END IF
+       CALL kgmm24(e%a,e%b,e%cd(:,:,i),stres,stiff,pos(i),nvarl,aux)
+     END DO
+   END IF
+   ! assemble stiffness matrix and force vector
+   IF( sttmp ) THEN
+     CALL stiauxt(nbn,lnb(1),nvarl,ndime,stiff(1),force(1),gstif(1),ft(1,1))
+   ELSE
+     CALL stiaux(nbn,lnb(1),nvarl,ndime,stiff(1),force(1),gstif(1) )
+   END IF
+   e => e%next
+ END DO
+ DEALLOCATE ( stiff, bb )
+ RETURN
+
+ END SUBROUTINE stif24

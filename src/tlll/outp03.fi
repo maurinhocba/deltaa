@@ -1,0 +1,93 @@
+ SUBROUTINE outp03(b1,b2,nreqs,heade,narch,iwrit,ngrqs,ttime,nstre)
+ !********************************************************************
+ !
+ !**   output routine for shell elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT (IN) :: iwrit,   &!flag for output into ASCII file
+                                  nstre,   &!number of stress values
+                                  nreqs,   &!number of elements for output
+                                  narch     !output file number
+ INTEGER (kind=4), POINTER :: ngrqs(:)      !element numbers for output
+ REAL (kind=8), INTENT(IN) :: ttime         !total time
+ LOGICAL, INTENT(IN) :: b1,  &   !flag for output at selected points
+                        b2       !flag for global output
+ TYPE(ele03), POINTER  :: heade  !pointer to first element
+
+ TYPE(ele03), POINTER :: e
+
+ INTEGER (kind=4) g,i,ielem
+ REAL    (kind=8) ehist(2)
+ LOGICAL :: extra
+
+ ! *** writes stress history at requested gauss points at every toutd time
+
+ IF(b1 .AND. (nreqs > 0)) THEN
+   WRITE(narch,ERR=9999) ttime
+   DO g=1,nreqs
+     ielem  = ngrqs(g)
+     e => heade                   !point to first element
+     DO                           !search for element with label IELEM
+       IF( e%numel == ielem )EXIT !if found, exit search
+       e => e%next                !point to next element
+     END DO
+           !integrated stresses (forces and moments)
+     IF( ASSOCIATED(e%ehist) ) THEN
+       ehist(1) = e%ehist(1)
+       ehist(2) = SQRT(e%ehist(2))
+     ELSE
+       ehist(1:2) = 0d0
+     END IF
+     WRITE(narch,ERR=9999) e%strsg(1:8),ehist(1:2),e%ambda(1)
+   END DO
+   !  CALL flushf(narch)
+ END IF
+
+ ! *** writes stresses on output file
+
+ IF(b2) THEN
+   extra = nstre == 14
+   IF(iwrit == 1)WRITE(lures,"(5x,'STRESSES FOR SHELL ELEMENTS'/  &
+            &    'Element',6x,'N-xx',8x,'N-yy',8x,'N-xy',8x,      &
+            &                 'M-xx',8x,'M-yy',8x,'M-xy',9x,'Q-x',9x,'Q-y' &
+            &              8x,'Eepd',6x,'Equi.Stres',3x,'Lambda')",ERR=9999)
+
+   e => heade                   !point to first element
+   DO
+     IF( .NOT.ASSOCIATED(e) )EXIT
+     i = e%matno
+     ielem = e%numel
+     IF( ASSOCIATED (e%ehist) ) THEN
+       ehist(1:2) = e%ehist(1:2)
+       ehist(2) = SQRT(ehist(2))
+     ELSE
+       ehist = 0d0
+     END IF
+
+     !         writes complete stress state on tape 16
+
+       IF( extra )THEN
+         WRITE(16,ERR=9999) e%strsg(1:8),ehist(1:2),e%ambda(2),e%strsg(9:14)
+       ELSE
+         WRITE(16,ERR=9999) e%strsg(1:8),ehist(1:2),e%ambda(2)
+       END IF
+     IF(iwrit == 1)THEN
+       WRITE(lures,"(i7,8e12.4,2e12.5,f8.5)",ERR=9999) &
+                     ielem,e%strsg(1:8),ehist(1:2),e%ambda(2)
+       !           PRINT aditional stresses
+       IF(extra)THEN
+         WRITE(lures,"(' G.p.',5x,'M-xx',9x,'M-yy',9x,'M-xy',9x,'M-yx',9x, &
+                     & 'Q-x',10x,'Q-y')",ERR=9999)
+         WRITE(lures,"(i3,1x,6e13.5)",ERR=9999) g,e%strsg(9:14)
+       END IF
+     END IF
+
+     e => e%next          !point to next element
+   END DO
+ END IF
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE outp03

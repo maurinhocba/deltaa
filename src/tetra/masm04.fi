@@ -1,0 +1,88 @@
+ SUBROUTINE masm04(heade,emass,mass,sumat,lumpd,ifpre)
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd
+ INTEGER (kind=4), PARAMETER :: ndime=3
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele04 ), POINTER :: heade
+ INTEGER(kind=4), INTENT(IN) :: ifpre(:,:)
+
+ INTEGER (kind=4) :: isec,inode,lnode,idofn,lm(3,4),osec
+ REAL (kind=8) :: diag,outd,suma,voli,rhoel,ms(78),sume1
+ TYPE( ele04 ), POINTER :: e
+ TYPE (section), POINTER :: sec
+ LOGICAL :: found
+
+ osec = -1
+ IF(.NOT.lumpd)ms = 0d0
+ sume1=0.
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED (e) )EXIT
+   suma=0.
+   isec = e%matno
+   IF( osec /= isec )THEN
+     CALL sect_search(isec,found,sec)
+     rhoel = sec%mtbas%prope(5)                !material density
+     osec = isec
+   END IF
+   voli = e%dvol*rhoel
+   suma = suma + voli
+   diag = voli/4d0
+
+   !---generates lumped mass matrix proportional to diagonal
+
+   DO inode=1,nnode
+     lnode = e%lnods(inode)
+     DO idofn=1,ndime
+       emass(idofn,lnode)=emass(idofn,lnode)+diag
+     END DO
+   END DO
+   sume1 = sume1 + suma
+   IF(.NOT.lumpd)THEN  !consistent mass matrix
+     diag = diag/2d0     !invented values
+     outd = diag/3d0
+     !diagonal terms
+     ms( 1) = diag
+     ms(13) = diag
+     ms(24) = diag
+     ms(34) = diag
+     ms(43) = diag
+     ms(51) = diag
+     ms(58) = diag
+     ms(64) = diag
+     ms(69) = diag
+     ms(73) = diag
+     ms(76) = diag
+     ms(78) = diag
+     !out diagonal terms
+     ms( 4) = outd
+     ms( 7) = outd
+     ms(10) = outd
+     ms(16) = outd
+     ms(19) = outd
+     ms(22) = outd
+     ms(27) = outd
+     ms(30) = outd
+     ms(33) = outd
+     ms(37) = outd
+     ms(40) = outd
+     ms(46) = outd
+     ms(49) = outd
+     ms(54) = outd
+     ms(57) = outd
+     ms(61) = outd
+     ms(67) = outd
+     ms(72) = outd
+     ms(73) = outd
+     ms(76) = outd
+     ms(78) = outd
+     lm(1:3,1:4) = ifpre(1:3,e%lnods(1:4))
+     CALL ensmat(12,lm(1,1),ms(1),mass(1))
+   END IF
+   e => e%next
+ END DO
+ !IF(iwrit == 1) &
+ WRITE(lures,"(//'  total mass for TETRA element :', e15.7)")sume1
+ sumat = sumat + sume1
+ RETURN
+ END SUBROUTINE masm04

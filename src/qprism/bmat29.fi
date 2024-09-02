@@ -1,0 +1,28 @@
+ SUBROUTINE bmat29(bm1,bs1,b3,sh,bmat)
+ !
+ !*** B matrix  for a 3-D 12-node Prism solid-shell element
+ !    Green Lagrange Strains (TLF)
+ IMPLICIT NONE
+ ! dummy arguments
+ REAL (kind=8), INTENT(IN) :: bm1(:,:,:,:),   & !(ndime,nnod1,3,nface) in-plane matrix at faces
+                              bs1(:,:,:,:),   & !(ndime,nnode,2,nface) transverse shear matrix at faces
+                              b3(:,:,:),      & !(ndime,nnode,nface) transverse strain at center or faces
+                              sh(:)             !(nface) shape functions in zeta direction
+
+ REAL (kind=8), INTENT(OUT) :: bmat(:,:,:)      !(ndime,nnode,nstre)B-matrix
+
+
+ ! local variables
+
+ !IN-PLANE components
+   !for each node in bottom face
+   bmat(:,:,1) = sh(1)*bm1(:,:,1,1) + sh(2)*bm1(:,:,1,2)
+   bmat(:,:,2) = sh(1)*bm1(:,:,2,1) + sh(2)*bm1(:,:,2,2)
+   bmat(:,:,4) = sh(1)*bm1(:,:,3,1) + sh(2)*bm1(:,:,3,2)
+ ! TRANSVERSE SHEAR components
+   bmat(:,:,5:6) = sh(1)*bs1(:,:,:,1) + sh(2)*bs1(:,:,:,2)
+ ! TRANSVERSE NORMAL components
+   bmat(:,:,3) = sh(1)*b3(:,:,1) + sh(2)*b3(:,:,2)
+
+ RETURN
+ END SUBROUTINE bmat29

@@ -1,0 +1,66 @@
+ SUBROUTINE kgms12p(cd,s,ji,stiff,nv)
+ !
+ ! compute geometric stiffness for PRISM - transverse shear
+ !
+
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER(kind=4) :: nv                       !number of element DOFs
+ REAL (kind=8), INTENT(IN) ::  cd(6,3,2),  & !cartesian (y3)  derivatives at points
+                               ji(2,2,2),  & !inverse jacobian at each face
+                               s(2,2)        !integrated stresses at each face
+ REAL (kind=8), INTENT(OUT) :: stiff(*)      !stiffness matrix
+ ! local variables
+ INTEGER(kind=4), PARAMETER :: ni(2,3,2) = (/ 6,3, 0,6, 3,0, 15,12, 9,15, 12,9 /)
+ INTEGER (kind=4) i,j,k,l,pos,nv2,f,n1,n2
+ REAL (kind=8) :: value                 !diagonal value to add
+ REAL (kind=8) :: sa(2),q(3),nd(6,3)    !stress measures
+ INTEGER (kind=4) poesti
+ poesti(nv2,i,j) = (nv2-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+ nv2 = 2*nv
+
+ DO f=1,2   ! for each face
+   sa(:) = MATMUL(ji(:,:,f),s(:,f))    !transfer in-plane jacobian
+   q(1) = (-    sa(1)+    sa(2))/3d0
+   q(2) = (-    sa(1)-2d0*sa(2))/3d0
+   q(3) = (+2d0*sa(1)+    sa(2))/3d0
+
+   DO k=1,3 ! for each side
+     n1 = ni(1,k,f)  !side node with + contribution (previous DOF position)
+     n2 = ni(2,k,f)  !side node with - contribution (previous DOF position)
+     l = 0           !initializes DOF associated to N_3
+     DO i=1,6        ! for each node
+       value = q(k)*cd(i,k,f)
+       IF( n1 <= l )THEN
+         IF( n1 == l )value = 2d0*value
+         DO j=1,3      ! for each DOF (diagonal only)
+           pos = poesti(nv2,n1+j,l+j)   ! (I,J)
+           stiff(pos) = stiff(pos) + value
+         END DO
+         IF( n1 == l )value = value/2d0     !restore value for second node
+       ELSE
+         DO j=1,3      ! for each DOF (diagonal only)
+           pos = poesti(nv2,l+j,n1+j)   ! (I,J)
+           stiff(pos) = stiff(pos) + value
+         END DO
+       END IF
+       IF( n2 <= l )THEN
+         IF( n2 == l )value = 2d0*value
+         DO j=1,3      ! for each DOF (diagonal only)
+           pos = poesti(nv2,n2+j,l+j)   ! (I,J)
+           stiff(pos) = stiff(pos) - value
+         END DO
+       ELSE
+         DO j=1,3      ! for each DOF (diagonal only)
+           pos = poesti(nv2,l+j,n2+j)   ! (I,J)
+           stiff(pos) = stiff(pos) - value
+         END DO
+       END IF
+       l = l + 3     ! increment DOF position I
+     END DO
+   END DO
+ END DO
+
+ RETURN
+ END SUBROUTINE kgms12p

@@ -1,0 +1,51 @@
+ SUBROUTINE actu13(heade)
+ ! updates internal variables PRESENT ==> LAST CONVERGED
+ IMPLICIT NONE
+ TYPE(ele13), POINTER :: heade
+
+ INTEGER (kind=4) :: isec,nlayr,i,nvare,osec,stype
+ REAL(kind=8) :: defps
+ LOGICAL :: newmt,found
+ TYPE(ele13), POINTER :: e
+ TYPE (section), POINTER :: sec    !pointer to a section data
+
+ osec = -1
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED(e) ) EXIT
+   IF( ASSOCIATED(e%gausv) ) THEN   !Yield must be > zero
+     isec = e%matno                   !associated material
+     newmt = osec /= isec             !same material than previous ?
+     IF(newmt)THEN                     !if new material, get properties
+       CALL sect_search(isec,found,sec)
+       osec = isec                    !keep present material
+       stype = sec%secty              !section type
+       nlayr = sec%iprop(1)           !number of layers
+       nvare = sec%iprop(2)           !number of material components
+     END IF
+     IF( stype == 12 )THEN
+       DO i=1,nlayr
+         defps = e%gausv(8,i)  !pointer to increment in plastic strain
+         IF(defps > 0)THEN
+           e%gausv(1:3,i) = e%gausv(5:7,i) !current into last converged
+           e%gausv(4,i)   = e%gausv(4,i) + defps  !eff. pl. strain
+         END IF
+       END DO
+     !ELSE ! stype == 13
+     !  m = 1   !pointer to last converged
+     !  DO i=1,nlayr
+     !    n = m+nvar    !position of current values
+     !    defps = e%gausv(n+nstre,i)  !pointer to increment in plastic strain
+     !    IF(defps > 0)THEN
+     !      e%gausv(m:m+nstre-1,i) = e%gausv(n:n+nstre-1,i) !current into last converged
+     !      e%gausv(m+nstre,i) = e%gausv(m+nstre,i) + defps  !eff. pl. strain
+     !    END IF
+     !    m = m+inc    !position of last converged of next component in layer
+     !  END DO
+     END IF
+   END IF
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE actu13

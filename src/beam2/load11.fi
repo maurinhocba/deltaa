@@ -1,0 +1,53 @@
+ SUBROUTINE load11(nelem,loadf,gvect,gravy,ntype,heade,coord)
+ !********************************************************************
+ !
+ !***  evaluates gravity and line loads for beam/shell elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ INTEGER (kind=4) :: nelem,ntype
+ REAL (kind=8) loadf(:,:),gvect(3),gravy,coord(:,:)
+ TYPE(ele11), POINTER :: heade
+
+ !        local variables
+ INTEGER (kind=4) ielem,j,l,n,isec,osec
+ REAL (kind=8) weigt,dvolu,a(2)
+
+ REAL (kind=8),PARAMETER ::twopi=6.283185307179586d0
+ TYPE(ele11), POINTER :: e
+ TYPE(section), POINTER :: sec
+
+ e => heade
+ osec = -1
+ DO ielem = 1,nelem
+   isec  = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     IF(ntype == 1 )THEN
+       weigt = gravy*sec%mtbas%prope(5)*sec%rprop(4)
+     ELSE
+       weigt = gravy*sec%mtbas%prope(5)*sec%rprop(1)
+     END IF
+     osec  = isec
+   END IF
+
+   dvolu = weigt*e%l0(2)
+   IF(ntype == 3) THEN
+     dvolu = dvolu*twopi/6d0
+     a(1) = dvolu*(2d0*coord(1,e%lnods(2))+coord(1,e%lnods(3)))
+     a(2) = dvolu*(2d0*coord(1,e%lnods(3))+coord(1,e%lnods(2)))
+   ELSE
+     a = dvolu/2d0
+   END IF
+
+   DO n = 2,3
+     l = e%lnods(n)
+     DO j = 1,2 !ndime
+       loadf(j,l) = loadf(j,l) + a(n-1)*gvect(j)
+     END DO
+   END DO
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE load11

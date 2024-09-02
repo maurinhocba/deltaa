@@ -1,0 +1,62 @@
+ SUBROUTINE stran9(nn,ng,nstre,ntype,x,dx,phin,stran,shape,  &
+                   deriv,jac,r0,tg,psi,zigzag,zigzpp)
+ !***********************************************************************
+ !
+ !*****this routine computes strain measures for 2-d beam/shell elements
+ !
+ !***********************************************************************
+ IMPLICIT NONE
+ !              routine parameters
+ INTEGER (kind=4) nn,ng,nstre,ntype
+ REAL (kind=8), INTENT(IN) :: deriv(:,:),x(:,:),phin(:),shape(:,:),jac(:),r0(:),psi(:,:)
+ REAL (kind=8), INTENT(OUT) :: stran(:,:),dx(:,:),tg(:,:)
+ LOGICAL, INTENT(IN) :: zigzag,zigzpp
+
+ !              local variables
+ INTEGER (kind=4) g,nm,nq
+ REAL    (kind=8) dn(nn),phi,r,xi,t1,t2,dxx(2),dphi
+
+ SELECT CASE (ntype)
+ CASE (1)
+   nm = 2
+   nq = 3
+ CASE (2:3)
+   nm = 3
+   nq = 5
+ END SELECT
+ DO g = 1,ng
+   r    = DOT_PRODUCT(x(1,:),shape(:,g))                  !radius (for Shell of revolution)
+   phi  = DOT_PRODUCT(phin,shape(:,g))                    !director angle at gauss point (in fact phi = theta-pi/2)
+   dn   = deriv(:,g)/jac(g)                               !nodal function derivatives at GP
+   xi   = DOT_PRODUCT(phin,dn)                            !director angle derivative
+   dx(:,g) = MATMUL(x,dn)                                 !mid surface derivative
+   t1 = COS(phi)                                          !Cos phi
+   t2 = SIN(phi)                                          !Sin phi
+   tg(1,g) = -t2                                          !director at Gauss Point cos theta
+   tg(2,g) =  t1                                          !                        sin theta
+   !       strains
+   stran(1,g) = dx(1,g)*dx(1,g) + dx(2,g)*dx(2,g)         !u_x                       N
+   stran(nm,g) = -xi*(dx(1,g)*t1+dx(2,g)*t2)              !theta_x . u_x             M
+   stran(nq,g) = -t2*dx(1,g) + t1*dx(2,g)                 !gamma_0                   V
+   IF( ntype == 2 )THEN
+     stran(2,g) = 1d0
+     stran(4,g) = 0d0
+   ELSE IF( ntype == (3))THEN
+     stran(2,g) = (r/r0(g))**2
+     stran(4,g) = - r*t2/r0(g)**2
+   END IF
+   IF( zigzag  .OR. zigzpp )THEN
+     stran(nq+1,g) = DOT_PRODUCT(psi(1,:),dn)             !Psi derivative              M_phi
+     stran(nq+2,g) = DOT_PRODUCT(psi(1,:),shape(:,g))     !Psi value                   V_phi
+     IF( zigzpp .AND. nstre == 11 )THEN  !
+       stran(nq+3,g) = DOT_PRODUCT(psi(2,:),dn)         !Delta derivative            M_D
+       stran(nq+4,g) = DOT_PRODUCT(psi(3,:),dn)         !P2 derivative               M_2
+       stran(nq+5,g) = DOT_PRODUCT(psi(4,:),dn)         !P3 derivative               M_3
+       stran(nq+6,g) = DOT_PRODUCT(psi(2,:),shape(:,g)) !Delta value                 Q_D
+       stran(nq+7,g) = DOT_PRODUCT(psi(3,:),shape(:,g)) !Alpha value                 Q_2
+       stran(nq+8,g) = DOT_PRODUCT(psi(4,:),shape(:,g)) !delta value                 Q_3
+     END IF
+   END IF
+ END DO
+ RETURN
+ END SUBROUTINE stran9

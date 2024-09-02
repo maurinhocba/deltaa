@@ -1,0 +1,95 @@
+ SUBROUTINE stif14(heade, coora, gstif, force, logst, stint, nonrg, iffix, quadr)
+
+ ! computes stiffness matrix for element LBST
+
+ IMPLICIT NONE
+                               !--------- to optimize ---------
+ INTEGER (kind=4), PARAMETER :: ndime =3, nnode = 3, nvarl = 18
+ LOGICAL, INTENT(IN) :: logst, & !large strain
+                        nonrg, & !True = non-regular meshes
+                        quadr    !True = use quadratic approah
+ REAL (kind=8), INTENT(IN) :: coora(:,:)      !present coordinates
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:), & !global stiffness matrix
+                                  force(:)    !global force vector (prescribe displacements)
+ TYPE (ele14), POINTER :: heade               !pointer to first element
+ REAL(kind=8), POINTER :: stint(:,:)       !moments and shear
+ INTEGER (kind=4), INTENT(IN):: iffix(:)
+
+ !Local Variables
+
+ TYPE (ele14), POINTER :: e      !pointer to an element
+
+ LOGICAL :: sides(3), & !if sides exist
+            isidf(3)    !if sides clamped
+
+ REAL (kind=8) bmatx(18,6),& !bending B matrix
+               x(3,6),     & !nodal coordinates of the patch
+               t(3,2,0:3), & !local in-plane vector at sides elms
+               t3(3),      & !element normal
+               h(3,3),     & !integrated vectors
+               stiff(171)     !171 = nvarl*(nvarl+1)/2
+
+
+ INCLUDE 'stif_p0.fpp'
+
+ !***  Compute Element Stiffness matrix for all elements
+
+ bmatx(10:18,1:3) = 0d0    !zero extra membrane part
+ osec = -1
+ e => heade
+ ielem = 0
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = ielem + 1                 !element order
+   isec  = e%matno                   !associated material
+   newmt = osec /= isec              !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+     INCLUDE 'stif_p1.fpp'
+   END IF
+
+   !*** computes actual configuration
+
+   isidf = .FALSE.                  !initializes
+   x(:,1:3) = coora(:,e%lnods(1:3)) ! get coordinates of the main triangle
+   DO i =1,3                        !for each node in the patch
+     n = e%lnods(i+3)               ! node number
+     IF(n /= 0) THEN                ! node exist ?
+       sides(i) = .TRUE.            ! side element exist
+       x(:,i+3) = coora(:,n)        ! get coordinates of the side node
+     ELSE
+       sides(i) = .FALSE.           ! side does NOT exists
+       j = e%lnods(hh(1,i))         ! first node of the side
+       k = e%lnods(hh(2,i))         ! second node of the side
+       isidf(i) = iffix(j) == 1 .AND. iffix(k) == 1 !free or clamped ?
+     END IF
+   END DO
+
+   area1 = e%area1      !area of main element
+   stra1 = e%stra1      ! Metric tensors
+   ! local system & normals => t
+   CALL stra14(e%a,e%b,x,t3,t,h,sides,isidf,e%ci,nonrg,quadr)
+
+   ! compute elasticity matrix
+   INCLUDE 'stif_p2.fpp'
+
+   stiff = 0d0                !initializes stiffnes
+   ! membrane part (standard constant strain triangle)
+   CALL bmem14(e%a(:,0),e%b(:,0),bmatx(:,1:3),t(:,:,0),6)
+   ! bending part
+   IF( quadr )THEN
+      CALL bfle14q(e%lb,e%a,e%b,sides,isidf,bmatx(:,4:6),t,t3,h)
+   ELSE
+     CALL bfle14(e%lb,e%a,e%b,sides,isidf,bmatx(:,4:6),t,t3,h,e%ci,nonrg)
+   END IF
+   CALL btdbpr(bmatx(1,1),daux(1),stiff(1),nvarl,6)
+   ! geometric stiffness due to membrane part
+   stres = stint(11:13,ielem)*area1   ! (1:3)
+   CALL kgmm14(e%a(:,0),e%b(:,0),stres,stiff,nvarl)
+   ! assemble stiffness matrix and force vector
+   CALL stiaux(2*nnode,e%lnods(1),nvarl,ndime,stiff(1),force(1),gstif(1) )
+   e => e%next
+ END DO
+
+ RETURN
+
+ END SUBROUTINE stif14

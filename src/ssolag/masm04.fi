@@ -1,0 +1,111 @@
+ SUBROUTINE masm04(ndime,heade,emass,mass,sumat,lumpd,ngaus,ifpre)
+
+ ! Consistent and/or lumped mass matrix for 8-node solid-shell SSOLAG
+
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd
+ INTEGER (kind=4), INTENT(IN) :: ndime,ngaus,ifpre(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele04 ), POINTER :: heade
+
+ INTEGER (kind=4) :: isec,idofn,lm(ndime,nnode),osec,g,i,j,k,ii,n,l,nv,nv2
+ REAL (kind=8) :: suma,voli,rhoel,m(nnode)
+ REAL (kind=8), ALLOCATABLE :: a(:),ms(:)
+ TYPE( ele04 ), POINTER :: e
+ TYPE (section), POINTER :: sec
+ REAL (kind=8) :: shape(nnode,ngaus),der(nnode,3), &
+                  posgp(ngaus),weigp(ngaus),sh(3,ngaus)
+
+ INTEGER (kind= 4) posmt
+ posmt(nv2,i,j) = (nv2-i)*(i-1)/2+j  !position i,j in mass(nv x nv)
+
+ !  gauss points positions and shape functions
+ CALL gaussq (ngaus ,posgp ,weigp )
+ weigp = weigp*4d0
+ DO i=1,ngaus
+   CALL shape5(der(1,1),shape(1,i),0d0,0d0,posgp(i),nnode)
+   sh(1,i) = -0.5d0*(1d0-posgp(i))*posgp(i)
+   sh(2,i) =  1d0-posgp(i)**2
+   sh(3,i) =  0.5d0*(1d0+posgp(i))*posgp(i)
+ END DO
+
+ ! initialization
+ n = nnode*(nnode+1)/2                    !size of array a
+ l = (nnode*ndime*(nnode*ndime+1))/2      !size of mass matrix
+ ALLOCATE(a(n),ms(l))
+ nv = nnode*ndime     !number of DOFs
+ nv2 = 2*nnode*ndime  !twice the number of DOFs
+ suma=0.
+ osec = -1
+ ms = 0D0
+
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED (e) )EXIT
+   !  material and density
+   isec = e%matno
+   IF( osec /= isec )THEN
+     sec => psecs(isec)%p
+     IF( sec%mabas == -1 )THEN
+       rhoel = sec%rprop(3)
+     ELSE
+       rhoel = sec%mtbas%prope(5)  !material density
+     END IF
+
+     osec = isec
+   END IF
+
+   m = 0            !initializes lumped mass matrix
+   IF(.NOT.lumpd) a = 0d0
+   DO g=1,ngaus        !integration loop
+
+     voli = DOT_PRODUCT(e%dvol,sh(:,g))*weigp(g)*rhoel  !GP mass
+     suma = suma + voli                                 !add to total mass
+
+     ii = 0                   !Initializes Position in matrix
+     DO n = 1,nnode           !For each node
+        m(n) = m(n) + shape(n,g)*voli  !associated (lumped) mass
+        IF(.NOT.lumpd) THEN    !Consistent matrix
+           DO l = n,nnode       !for each node
+             ii = ii+1          !position in matrix
+             a(ii) = a(ii) + shape(n,g)*shape(l,g)*voli
+           END DO
+        END IF     !.NOT.lumpd
+     END DO     !n=1,nnode
+   END DO     !g=1,ngaus
+
+   !---generates lumped mass matrix proportional to diagonal
+
+   DO n=1,nnode
+     l = e%lnods(n)
+     DO idofn=1,ndime
+       emass(idofn,l)=emass(idofn,l)+m(n)
+     END DO
+   END DO
+
+   IF(.NOT.lumpd) THEN
+                 !consistent mass matrix  Assembles over MASS(maxa)
+     i = 0                            ! Position in matrix A initialization
+     g = 0                            ! elemental DOF initialization
+     DO n = 1,nnode                   ! For each nodee
+       j = (n-1)*ndime                ! Initializes Column position in M
+       DO l = n,nnode                 ! For each node
+         i = i+1                      ! Matrix position in A
+         k = (l-1)*ndime              ! Initializes Row position in M
+         DO ii = 1,ndime              ! For each direction in space
+           ms(posmt(nv2,j+ii,k+ii)) = a(i)
+         END DO
+       END DO
+     END DO
+     lm = ifpre(1:3,e%lnods)
+     CALL ensmat(nv,lm(1,1),ms(1),mass(1))
+   END IF
+
+   e => e%next
+ END DO
+ !IF(iwrit == 1) &
+ WRITE(lures,"(//'  total mass for SSOLAG element:', e15.7)")suma
+ sumat = sumat + suma
+ DEALLOCATE (a,ms)
+ RETURN
+ END SUBROUTINE masm04

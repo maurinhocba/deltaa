@@ -1,0 +1,70 @@
+ SUBROUTINE masm20(ndime,heade,emass,mass,sumat,lumpd,ifpre)
+ !
+ !  Computes mass matrix of a triangle
+ !
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd
+ INTEGER (kind=4), INTENT(IN) :: ndime,ifpre(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele20 ), POINTER :: heade
+
+ INTEGER (kind=4) :: isec,inode,lnode,idofn,lm(2,3),osec
+ REAL (kind=8) :: diag,outd,suma,voli,rhoel,ms(21),sume1
+ TYPE( ele20 ), POINTER :: e
+ TYPE (section), POINTER :: sec
+
+
+ osec = -1
+ IF(.NOT.lumpd)ms = 0d0
+ sume1=0.
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED (e) )EXIT
+   suma=0.
+   isec = e%matno
+   IF( osec /= isec )THEN
+     sec => psecs(isec)%p
+     rhoel = sec%mtbas%prope(5)                !material density
+     osec = isec
+   END IF
+   voli = e%area1*rhoel
+   suma = suma + voli
+   diag = voli/3d0
+
+   !---generates lumped mass matrix proportional to diagonal
+
+   DO inode=1,nnode
+     lnode = e%lnods(inode)
+     DO idofn=1,ndime
+       emass(idofn,lnode)=emass(idofn,lnode)+diag
+     END DO
+   END DO
+   sume1 = sume1 + suma
+   IF(.NOT.lumpd)THEN  !consistent mass matrix
+     diag = diag/2d0
+     outd = diag/2d0
+     !diagonal terms
+     ms( 1) = diag
+     ms( 7) = diag
+     ms(12) = diag
+     ms(16) = diag
+     ms(19) = diag
+     ms(21) = diag
+     !out diagonal terms
+     ms( 3) = outd
+     ms( 5) = outd
+     ms( 9) = outd
+     ms(11) = outd
+     ms(14) = outd
+     ms(16) = outd
+     lm(1:2,1:3) = ifpre(1:2,e%lnods(1:3))
+     CALL ensmat(6,lm(1,1),ms(1),mass(1))
+   END IF
+   e => e%next
+ END DO
+ !IF(iwrit == 1) &
+ WRITE(lures,"(//'  total mass for 2D solid element :', e15.7)",ERR=9999)sume1
+ sumat = sumat + sume1
+ RETURN
+ 9999 CALL runen2(' ')
+ END SUBROUTINE masm20

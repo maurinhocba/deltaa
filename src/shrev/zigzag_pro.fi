@@ -1,0 +1,137 @@
+ SUBROUTINE zigzag_pro(ntype,nstre,ngaus,prop,iprop,thick,st,first,delta)
+ IMPLICIT NONE
+ !dummy arguments
+ !TYPE (section), POINTER :: sec  !pointer to a section data
+ REAL(kind=8), INTENT(IN) :: st(:,:), & !strains(1:nstre,:)
+                             delta,   & !coordinate increment along "x"
+                             prop(:), & !layer properties thickness and z coordinate
+                             thick      !shell thickness
+ INTEGER(kind=4), INTENT(IN) :: nstre,ntype,ngaus,iprop(:)   !layer material pointers
+ INTEGER, INTENT(IN) :: first
+ !local variables
+ TYPE (mater), POINTER :: mat
+ INTEGER(kind=4) :: i,nl,j,ip,ii,ns,nm,loop,jj
+ REAL(kind=8) :: e(2),z,celoc(6),ce(4),t,tt(2),strp(nstre),rr
+ REAL(kind=8), ALLOCATABLE :: sx(:,:),tx(:,:),beta(:),phi(:),rprop(:,:),zc(:,:),ahf(:)
+ REAL(kind=8), DATA :: sxo(0:51,2) = 0d0, txo(51,2) = 0d0
+ logical :: imp
+
+ nl = iprop(1)
+ ALLOCATE( sx(0:nl,2),tx(nl,2),beta(nl),phi(0:nl),rprop(2,nl),zc(0:nl,2),ahf(0:nl))
+ CALL vecasi (nl+1,prop(1),phi)        ! phi
+ j = 2+nl
+ CALL vecasi (nl,prop(j),beta)         ! beta
+ j = j+nl
+ CALL vecasi (nl*2,prop(j),rprop)        ! ad-hoc functions for shear
+ j = j+nl*2
+ CALL vecasi (nl+1,prop(j),ahf)        ! ad-hoc functions for shear
+
+ loop =1
+ IF( first == 3 )loop = 2
+ DO jj=1,loop
+   ii=5                                    ! point to first material
+   ip = iprop(ii)
+   mat => pmats(ip)%p                         !point to material
+   IF( ntype == 1 )THEN
+      CALL elastiff(celoc,mat,6)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+      ns = 3
+      nm = 2
+   ELSE
+      CALL elastiff(celoc,mat,4)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+      nm = 3
+      ns = 5
+   END IF
+   ce(1:4) = celoc((/1,2,3,5/))                !
+
+   IF( first == 1 )THEN
+     strp = st(:,ngaus)
+   ELSE IF (first == 2 )THEN
+     strp = st(:,1)
+   ELSE IF (jj == 1)THEN
+     strp = st(:,1)
+   ELSE
+     strp = st(:,ngaus)
+   END IF
+   z = -thick/2d0
+   sx = 0d0
+   DO i=0,nl
+     IF( i > 0 )THEN
+       z = z + rprop(1,i)/2d0
+       !rr = (ahf(i)+ahf(i-1))/2d0
+       tx(i,1) = (beta(i)+1d0)*strp(nstre)*ce(4)  !tau-b
+       tx(i,2) = (strp(ns)-strp(nstre))*ce(4)        !tau-c
+       !tx(i,2) = (strp(ns)-strp(nstre))*rr           !Dtau
+       zc(i,2) = z
+       z = z + rprop(1,i)/2d0
+     END IF
+     zc(i,1) = z
+     e(1) = strp(1) + strp(nm)*z + strp(ns+1)*phi(i)                   !E11
+     e(2) = 0d0
+     IF( ntype == 3 ) e(2) = strp(2) + strp(4)*z + strp(6)*phi(i)      !E22
+     sx(i,1) = DOT_PRODUCT(e,ce(1:2))
+     IF( i > 0 .AND. i < nl) THEN
+       ii = ii+1                             !update material pointer
+       ip = iprop(ii)
+       mat => pmats(ip)%p                    !point to material
+       IF( ntype == 1 )THEN
+         CALL elastiff(celoc,mat,6)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+       ELSE
+         CALL elastiff(celoc,mat,4)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+       END IF
+       ce(1:4) = celoc((/1,2,3,5/))                !
+       sx(i,2) = DOT_PRODUCT(e,ce(1:2))
+     ELSE
+       sx(i,2) = sx(i,1)
+     END IF
+   END DO
+   IF( first == 1 .OR. (first == 3 .AND. jj==1) )THEN
+     sxo(0:nl,1:2) = sx
+     txo(1:nl,1:2) = tx
+   ELSE
+!!!   DO i=0,nl
+!!!     WRITE(58,"(f10.4,e15.5)")zc(i,1)*1000,(sx(i,1) + sxo(i,1))/2d0
+!!!     IF( i > 0 .AND. i < nl) WRITE(58,"(f10.4,e15.5)")zc(i,1)*1000,(sx(i,2)+sxo(i,2))/2d0
+!!!   END DO
+!!!   sxo(0:nl,1:2) = (sxo(0:nl,1:2) - sx )/delta
+!!!   t = 0d0
+!!!   WRITE(58,"(/,2x,f10.4,e15.5)")zc(0,1)*1000,t
+!!!   DO i=1,nl
+!!!     z = zc(i,1) - zc(i-1,1)
+!!!     t = t + (sxo(i-1,2)+sxo(i,1))/2d0*z
+!!!     WRITE(58,"(2x,f10.4,1e15.5)")zc(i,1)*1000,-t
+!!!   END DO
+
+     DO i=0,nl
+       tt(1) = (sx(i,1) + sxo(i,1))/2d6
+       tt(2) = (sxo(i,1) - sx(i,1) )/delta/1e6
+       sx(i,1) = tt(1)
+       sxo(i,1) = tt(2)
+       tt(1) = (sx(i,2) + sxo(i,2))/2d6
+       tt(2) = (sxo(i,2) - sx(i,2) )/delta/1e6
+       sx(i,2) = tt(1)
+       sxo(i,2) = tt(2)
+     END DO
+
+     t = 0d0
+     WRITE(58,"('S_xx  S_xz_i')")
+     WRITE(58,"(2x,f10.4,2e15.5)")zc(0,1)*1000,sx(0,1),t
+     DO i=1,nl
+       z = zc(i,1) - zc(i-1,1)
+       t = t + (sxo(i-1,2)+sxo(i,1))/2d0*z
+       !IF(i == 15) WRITE(58,"(2x,f10.4,2e15.5)")zc(i,1)*1000,sx(i,1),-t
+       WRITE(58,"(2x,f10.4,2e15.5)")zc(i,1)*1000,sx(i,1),-t
+       IF( i < nl) WRITE(58,"(2x,f10.4,2e15.5)")zc(i,1)*1000,sx(i,2),-t
+     END DO
+     WRITE(58,"('S_xz_b S_xz_c')")
+     DO i=1,nl
+       !i=15
+       tt(1) = (tx(i,1)+txo(i,1))/2d6
+       tt(2) = (tx(i,2)+txo(i,2))/2d6 + tt(1)
+       WRITE(58,"(f10.4,3e15.5)")zc(i,2)*1000,-tt(1),-tt(2)
+       !WRITE(58,"(f10.4,3e15.5)")zc(i,2)*1000,-tt(1),-tt(2)+tt(1),-tt(2)
+     END DO
+   END IF
+ END DO
+
+ RETURN
+ END SUBROUTINE zigzag_pro

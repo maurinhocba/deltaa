@@ -1,0 +1,314 @@
+ SUBROUTINE resv30( nele0, head0, iffix, coora, resid, logst, ierr, ttime, bottom, &
+                     top, coorb, coort, ifact, stint)
+ !-------------------------------------------------------------------
+ !
+ !          EVALUATION OF INTERNAL FORCES ELEMENT TL CST-BST++
+ !
+ !-------------------------------------------------------------------
+ !$ USE omp_lib
+ !USE ctrl_db, ONLY : itemp
+ USE npo_db, ONLY : coori,coord !,tempe !coordinates at previous iteration
+ USE gvar_db, ONLY : ksnxt           !computes Stiffness matrix in next iteration
+ IMPLICIT NONE
+
+ ! dummy arguments
+ LOGICAL, INTENT(IN) :: logst       !flags for small or large strain analysis
+ LOGICAL, INTENT(IN) :: bottom,top  !flags for top and bottom surface computation
+ INTEGER (kind=4), INTENT(IN) :: nele0,     & !number of elements in the set
+                                 iffix(:)     !nodal fixities
+ INTEGER (kind=4), INTENT(OUT) :: ierr,     & !flag for error detection
+                               ifact(:)       !weigths for surface computation
+ REAL(kind=8),INTENT (IN) :: coora(:,:),    & !present coordinates
+                             ttime            !present total time
+ REAL(kind=8),INTENT (IN OUT) :: resid(:,:),& !internal nodal forces
+                                 coorb(:,:),& !bottom surface coordinates
+                                 coort(:,:)   !top surface coordinates
+ TYPE (ele30), POINTER  :: head0              !pointer to first element
+ REAL(kind=8), POINTER :: stint(:,:)       !moments and shear
+
+
+ ! local variables
+ REAL (kind=8), PARAMETER :: fac(4) = (/ -1d0, 1d0, 1d0, -1d0 /)
+
+ TYPE (ele30), POINTER :: e    !pointer to an element data
+ TYPE (ele30), POINTER  :: heade  !pointer to first element
+
+ LOGICAL :: bounc(6)
+ INTEGER (kind=4)  :: m,iel,i3,nelem    !element order
+
+ REAL (kind=8) stra1(6),    & !first and second fundamental forms
+               bmem(9,3),   & !membrane B matrix
+               bflt(18,3),  & !bending B matrix
+               x(3,12),     & !nodal coordinates of the patch
+               t(3,2),      & !local in-plane vector at center
+               t3(3),tt(3), & !element normal
+               tns(3,3),    & !normal gradient at each side
+               h(3,3),      & !integrated vectors
+               rl1(3,6),    & !nodal internal equivalent forces (6-node element)
+               rl(3,12)       !nodal internal equivalent forces (12-node patch)
+
+ REAL (kind=8) ::  n1,n2,ls     !normal to the side and length
+
+ INCLUDE 'resv_p0.fpp'      !common definition
+
+ !Auxiliar variables for parallel code
+ !!$ INTEGER(kind=4), PARAMETER :: maxel=34816,minel=32768  !8 threads
+ !!$ INTEGER(kind=4), PARAMETER :: maxel=18432,minel=16384  !4 threads
+ !$ INTEGER(kind=4), PARAMETER :: maxel=10240,minel= 8192    !2 threads
+ !$ INTEGER(kind=4):: nloop,iloop,irest    !
+ INTEGER(kind=4):: lim_inf,  & ! first element for each processor
+                   lim_sup,  & ! last element for each processor
+                   num_chk     ! number of elements chunks
+
+!!$ INTEGER(kind=4),PARAMETER:: MAXLOCK=2048              !number of keys
+!!$ INTEGER(kind=4),SAVE     :: lock1(0:MAXLOCK-1)        !keys
+!!!$ INTEGER(kind=OMP_lock_kind),SAVE :: lock1(0:MAXLOCK-1) !keys
+!!$ LOGICAL,SAVE             :: inilock=.FALSE.           !initialization flag
+
+ heade => head0
+ nelem = nele0
+
+!!Initialize exclusion variables for parallel code (only first time)
+!!$ IF (.NOT.inilock) THEN                   !first time only
+!!$   DO iel=0,MAXLOCK-1                     !for each key
+!!$     CALL omp_init_lock(lock1(iel))          !unlock
+!!$   END DO
+!!$   inilock = .TRUE.                         !change flag
+!!$ END IF
+!!  check maximum number of elements to be processed
+!!$ IF( nelem > maxel )THEN
+!!$   nloop = nelem/minel
+!!$   irest = MOD(nelem,minel)
+!!$  IF( irest >= maxlock ) nloop = nloop + 1
+!!$  nelem = minel
+!!$ ELSE
+!!$  nloop = 1
+!!$ END IF
+!!$ DO iloop=1,nloop
+
+ !initialize variables
+ num_chk =  1    !only one processor or thread
+ lim_inf =  1    !first element
+ lim_sup = nelem !last element
+
+!!$OMP  PARALLEL                                                                           &
+!!$OMP& SHARED (              ndepd, psecs, pmats,                                         &
+!!$OMP&         heade, iffix, coora, resid, logst, ierr, ttime,                            &
+!!$OMP&         bottom, top, coort, coorb, ifact, stint,                                   &
+!!$OMP&         num_chk, lock1, letra            )                                         &
+!!$OMP& PRIVATE(lim_inf, lim_sup, e, isidf, sides, solsi, mti, iel, i3, lna,               &
+!!$OMP&         stra1, bmem, bflt, x, t, t3, tt, h, rl, y, yl, yp, sh,                     &
+!!$OMP&         large, ttti, pflag,                                                        &
+!!$OMP&         newmt,  natst, elast, shell, plast, shear, visco, coupled,                 &
+!!$OMP&         ielem, i, j, k, n, l, ilv, jlv, error,                                     &
+!!$OMP&         isec, nl, nlayr, mtype, nucom, secty, oldm, mate, numpt, osec, nvar,       &
+!!$OMP&         stres, sigma, stran, stral, strel, stine, r1,r2, lb, lc, thnew, zk,        &
+!!$OMP&         aux, area1, s1, s2, efpst, strpl, dstpl, eql,                              &
+!!$OMP&         thick, poiss, db, ce, cp, c, gh, dm, alpha, propi, chi, chib, chid,        &
+!!$OMP&         deatht, minstr, min_tr, max_tr,                                            &
+!!$OMP&         thf, wei, shf,                                                             &
+!!$OMP&         thickl, zposl, rr, cm, prop, volfr, lvari, val, varin,                     &
+!!$OMP&         sec, mat, matm, matf, matsl)
+
+!!$ IF( omp_get_num_threads() > 1 )THEN
+!  !$ num_chk = (nelem+omp_get_num_threads()-1)/omp_get_num_threads()
+!  !$ lim_inf = MIN(nelem,1+omp_get_thread_num()*num_chk)     !Find the first element in the list
+!  !$ lim_sup = MIN(nelem,num_chk*(1+omp_get_thread_num()))   !Find the last element in the list
+!!$ END IF
+
+ e => heade                          !point to head of the list
+ DO iel=1,lim_inf-1                  !Loop over the list to find the first element in the list
+   e => e%next                       !Point the first element of the list
+ END DO
+
+ !***  Computes nodal internal forces, integrating trought the thickness
+
+ osec = -1                           !no previous material
+ error = 0
+
+ ELEMS: DO iel=lim_inf,lim_sup    !loop over the elements ()
+   IF (ierr == 1) CYCLE ELEMS       ! if there is an error CYCLE TO END (RETURN or EXIT are not allowed in parallel)
+   ielem = e%numel                   !element number
+   isec = e%matno                   !associated material
+   newmt = osec /= isec             !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+     INCLUDE 'resv_p1.fpp'           !get material constant
+   END IF
+!!   !-----------------------------------------------------------------
+!!   ! compute linear strain and stress increments for geometric matrix
+!!   IF(ksnxt) THEN
+!!     x(:,1:3) = coora(:,e%lnods(1:3)) ! get coordinates of the main triangle
+!!     y(:,1:3) = coori(:,e%lnods(1:3)) ! get coordinates of the main triangle
+!!     h = x(:,1:3) - y(:,1:3)       ! incremental displacements
+!!     !for main triangle
+!!     t(:,1,0) = -MATMUL(y(:,1:3),e%b(:,0))     ! x(1)
+!!     t(:,2,0) = +MATMUL(y(:,1:3),e%a(:,0))     ! x(2)
+!!     CALL bmem30(e%a(:,0),e%b(:,0),bmem,t(:,:,0),3)
+!!     CALL proma1(stran(1),h(1,1),bmem(1,1),1,3,9)  !incremental in-plane strains at bottom face
+!!     stint(11,iel) =  stint(1,iel) + dm(1)*stran(1) + dm(2)*stran(2)
+!!     stint(12,iel) =  stint(2,iel) + dm(2)*stran(1) + dm(3)*stran(2)
+!!     stint(13,iel) =  stint(3,iel) + dm(4)*stran(3)
+!!   END IF
+!!  !-----------------------------------------------------------------
+   !*** computes actual configuration
+   k = 7
+   DO i=1,3   !for each vertex
+     n = e%lnods(i)                !node number
+     x(:,i) = coora(:,n)           !get present  coordinates
+     bounc(i) = iffix(n) == 1      !.TRUE. = clamped
+     m =i+3                        !opposite node in first ring
+     n = e%lnods(m)                !node number
+     IF(n /= 0) THEN               !if node exist
+       x(:,m) = coora(:,n)         !get present  coordinates
+       bounc(m) = iffix(n) == 1      !.TRUE. = clamped
+       DO j =k,k+1                   !for all nodes in the patch
+         n = e%lnods(j)                !node number
+         IF(n /= 0) THEN               !if node exist
+           x(:,j) = coora(:,n)         !get present coordinates
+         ELSE
+           x(:,j) = 0d0                ! null values
+        END IF
+       END DO
+     ELSE
+       x(:,m) = 0d0                ! null values
+       bounc(m) = .FALSE.          !.TRUE. = clamped
+       x(:,k:k+1) = 0d0            ! null values
+     END IF
+     k=k+2
+   END DO
+
+   ! compute first and second fundamental forms
+   CALL stra30(e%numel,e%a,e%b,e%cdn,x,t3,t,tns,h,e%bcode,bounc,e%nab,stra1,e%lb)
+   !INCLUDE 'resv_p2.fpp'            !check thickness ratio
+
+   ! Modify curvatures, substracting the original ones
+   IF( shell ) stra1(4:6) = stra1(4:6) - e%stra0(1:3)
+   e%stra1 = stra1(1:6)    ! keep Mid Surface metric tensors
+   ! consider thermal strains
+   !IF( alpha > 0 )THEN     ! compute
+   !  t0 = 1d0+alpha*SUM(tempe(e%lnods(1:3),1))
+   !  e%lb = e%lb*t0        ! modify thickness ratio
+   !END IF
+
+   thnew = thick*e%lb                  !thickness at new configuration
+
+   !IF( alpha > 0 )t1 = alpha*SUM(tempe(e%lnods(1:3),2))*2d0/thnew
+
+!   IF( bottom .OR. top) THEN      !bottom or top surfaces required
+!     ! determine element normal to compute top-bottom surfaces
+!     IF( ALL(.NOT.isidf))THEN     !no clamped sides
+!       tt = t3                    !element normal
+!     ELSE                         !one or more clamped sides
+!       n = 0                      !initializes number of clamped sides
+!       DO i=1,3                   !loop over each side
+!         IF( isidf(i) )THEN       !if side clamped
+!           n = n+1                !increase number of clamped sides
+!           rl(:,n) = e%a(:,i)/2d0  !normal to plane of symmetry
+!         END IF
+!       END DO
+!       IF( n == 1)THEN            !for one clamped side (or symmetry plane)
+!         CALL vecuni(3,rl(1,1),aux)
+!         aux = DOT_PRODUCT(rl(:,1),t3)    !proyect normal over plane
+!         tt(:) = t3 - aux*rl(:,1)       !proyect normal over plane
+!       ELSE                       !mfor two clamped side (or symmetry planes)
+!         CALL vecpro(rl(1,1),rl(1,2),tt) !normal to both planes
+!       END IF
+!       CALL vecuni(3,tt,aux)             !unit vector
+!     END IF
+!     tt = tt*thnew          !
+!   END IF
+   area1 = e%area1
+
+   INCLUDE 'resv_p3.fpp'                !trougth the thickness integration
+   stine(7:8) = 0d0                    !initializes shear
+!   ! new version
+!   DO i=1,3
+!     n = e%lside(i)                 ! element side
+!     IF(n > 0) THEN                 ! element exist ?
+!       stres(1:3) = stint(4:6,n)
+!     ELSE !boundary side
+!       ls  = SQRT(e%b(i,0)**2+e%a(i,0)**2)     !side pseudo length
+!       n1 =  e%b(i,0)/ls                     !normalizes side to compute normal
+!       n2 = -e%a(i,0)/ls
+!       n11 = n1*n1                         !auxiliar factors
+!       n12 = n1*n2
+!       n22 = n2*n2
+!       IF (isidf(i) )THEN !clamped/symmetry
+!         mn = RESHAPE ((/   n11*n11+n22*n22,       2d0*n11*n22, n12*(n11-n22),    &
+!                                2d0*n11*n22,   n11*n11+n22*n22, n12*(n22-n11),    &
+!                          2d0*n12*(n11-n22), 2d0*n12*(n22-n11),   4d0*n11*n22 /), &
+!                      (/3,3/))
+!       ELSE               !simple supported
+!         mn = RESHAPE ((/ 2d0*n11*n22+n22*n22,            -n11*n22,        -n12*n11,    &
+!                                     -n11*n22, 2d0*n11*n22+n11*n11,        -n12*n22,    &
+!                                 -2d0*n12*n11,        -2d0*n12*n22, n11*n11+n22*n22 /), &
+!                      (/3,3/))
+!       END IF
+!       stres(1:3) = MATMUL (mn,stint(4:6,iel))
+!     END IF
+!     stine(7) = stine(7) + stres(1) * e%b(i,0) - stres(3) * e%a(i,0)
+!     stine(8) = stine(8) + stres(3) * e%b(i,0) - stres(2) * e%a(i,0)
+!   END DO
+
+!   old version
+!   DO i=1,3
+!     n = e%lside(i)                 ! element side
+!     IF(n > 0) THEN                ! element exist ?
+!       stine(7) = stine(7) + stint(4,n) * e%b(i,0) - stint(6,n) * e%a(i,0)
+!       stine(8) = stine(8) + stint(6,n) * e%b(i,0) - stint(5,n) * e%a(i,0)
+!     ELSE
+!       stine(7) = stine(7) + stint(4,iel) * e%b(i,0) - stint(6,iel) * e%a(i,0)
+!       stine(8) = stine(8) + stint(6,iel) * e%b(i,0) - stint(5,iel) * e%a(i,0)
+!     END IF
+!   END DO
+
+   stint(1:10,iel) = stine                      !store N, M, Q & vMS  for post-processing
+   stine(1:6) = stint(1:6,iel)*area1            !Original area used (TLF)
+
+   ! actual membrane B Matrix
+   CALL bmem30(e%a,e%b,bmem,t,3)
+   CALL proma3(rl(1,1),bmem(1,1),stine(1),9,3,.TRUE.)  !membrane contributions
+   ! compute bending B matrix  AQUI HAY QUE TRABAJAR
+   IF(shell)THEN
+     rl1(1:3,1:3) = rl(1:3,1:3)
+     rl1(1:3,4:6) = 0d0
+     CALL bfle30(e%lb,e%a,e%b,bflt,t,t3,h,e%cdn)
+     CALL proma3(rl1(1,1),bflt(1,1),stine(4),18,3,.FALSE.) !bending contributions
+     CALL modvec30(rl1,rl,e%bcode,bounc,x,e%nab)
+   END IF
+
+   DO i=1,12            !for each node in the patch
+     n = e%lnods(i)     !node
+     IF(n > 0) THEN
+       !!$ CALL omp_set_lock(lock1(MOD(n,MAXLOCK)))    !Start blocking acess in shared variables
+       resid(1:3,n) = resid(1:3,n)+rl(1:3,i) !sum internal force
+       !IF( i < 4 )THEN
+       !  IF( bottom .OR. top )THEN
+       !    IF(bottom) coorb(:,n) = coorb(:,n) - tt !bottom surface
+       !    IF(top   ) coort(:,n) = coort(:,n) + tt !top surface
+       !    ifact(n) = ifact(n) + 2  !increase weigthing factor
+       !  END IF
+       !END IF
+       !!$ CALL omp_unset_lock(lock1(MOD(n,MAXLOCK)))  !End blocking acess in shared variables
+     END IF
+   END DO
+   e => e%next          !point to next node in the list
+ END DO ELEMS
+ !!$OMP END PARALLEL
+ !!$ IF( iloop < nloop )THEN
+ !!$   DO i=1,nelem
+ !!$     heade => heade%next
+ !!$   END DO
+ !!$   IF( iloop + 1 == nloop ) THEN
+ !!$     IF( irest < maxlock)THEN
+ !!$       nelem = nelem + irest
+ !!$     ELSE
+ !!$       nelem = irest
+ !!$     END IF
+ !!$   END IF
+ !!$ END IF
+ !!$ END DO
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE resv30

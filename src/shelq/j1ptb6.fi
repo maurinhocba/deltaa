@@ -1,0 +1,50 @@
+ SUBROUTINE j1ptb6(ndofe,nnode,r,s,jacin,bsmtx,bmatx)
+ !****************************************************************************
+ !
+ !*****evaluates shear strains at gauss points from
+ !       the assumed strain point values for element 6
+ !
+ !***************************************************************************
+ IMPLICIT NONE
+ !                          routine arguments
+
+ INTEGER (kind=4), INTENT (IN) ::  ndofe,nnode
+
+ REAL (kind=8), INTENT(IN) :: r,s,jacin(:,:),bsmtx(:,:,:)
+ REAL (kind=8), INTENT(OUT) :: bmatx(:,:,:)
+
+ !                          local variables
+
+ INTEGER (kind=4) i,j
+ REAL    (kind=8) pA,pC,pD,pB,aux(2) !auxil(ndofe,nnode,2)
+
+ pA = (1d0-r)/2d0     ! (1-xita)/2
+ pB = (1d0-s)/2d0     ! (1-eta)/2
+ pC = (1d0+r)/2d0     ! (1+xita)/2
+ pD = (1d0+s)/2d0     ! (1+eta)/2
+
+ !!       bsnatural = [p**t (r,s)]*bshearmatrix
+ !auxil(:,:,1) = pB*bsmtx(:,:,B)+pD*bsmtx(:,:,D)
+ !auxil(:,:,2) = pA*bsmtx(:,:,A)+pC*bsmtx(:,:,C)
+ !!       bscartesian = jacobian**(-1) bshearmatrix
+ !bmatx = MATMUL(auxil,TRANSPOSE(jacin)) !not possible any longer
+
+ DO i=1,nnode
+   DO j=1,5
+     aux(1) = pB*bsmtx(j,i,2)+pD*bsmtx(j,i,4)
+     aux(2) = pA*bsmtx(j,i,1)+pC*bsmtx(j,i,3)
+     bmatx(j,i,7) = jacin(1,1)*aux(1)+jacin(1,2)*aux(2)
+     bmatx(j,i,8) = jacin(2,1)*aux(1)+jacin(2,2)*aux(2)
+   END DO
+   IF( ndofe == 7) THEN
+     DO j=6,7
+       aux(1) = pB*bsmtx(j,i,2)+pD*bsmtx(j,i,4)
+       aux(2) = pA*bsmtx(j,i,1)+pC*bsmtx(j,i,3)
+       bmatx(j,i,13) = jacin(1,1)*aux(1)+jacin(1,2)*aux(2)
+       bmatx(j,i,14) = jacin(2,1)*aux(1)+jacin(2,2)*aux(2)
+     END DO
+   END IF
+ END DO
+
+ RETURN
+ END SUBROUTINE j1ptb6

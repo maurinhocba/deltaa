@@ -1,0 +1,315 @@
+ SUBROUTINE resv18i(nelem, heade, coora, resid, ierr, ttime, small, nnode, &
+                   coord, ngaus, shell, gpc, sbbar) ! , velnp
+ !-------------------------------------------------------------------
+ !
+ !          EVALUATION OF INTERNAL FORCES ELEMENT T-L 3-D SOLID
+ !
+ !-------------------------------------------------------------------
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN OUT) :: ierr     !flag for error detection
+ INTEGER (kind=4), INTENT(IN) :: nelem,     & !total elements in set
+                                 nnode,     & !number of nodes
+                                 ngaus        !number of integration points
+ REAL(kind=8),INTENT (IN) :: coora(:,:),    & !present coordinates
+                             coord(:,:),    & !initial coordinates
+                             gpc(:,:),      & !gauss point coordinates
+                             ttime            !present total time
+ REAL(kind=8),INTENT (IN OUT) :: resid(:,:)   !internal nodal forces
+ TYPE (ele18), POINTER  :: heade              !pointer to first element
+ LOGICAL, INTENT(IN) :: small,   &  !.TRUE. if Green strains will be used
+                        sbbar,   &  !.TRUE. BBAR for volumetric strain
+                        shell       !.TRUE. assumed strain for transverse shear
+ ! local variables
+ ! variables for assumed strain transverse shear
+ REAL (kind=8) :: tas(3,4),      & ! der x/x_3 at Assumed Strain points
+                  gas(3,4),      & ! der x/xita or eta at Assumed Strain points
+                  vas(4)           ! strains at Assumed Strain Points
+ REAL (kind=8) :: tas0(3,4),      & ! der x/x_3 at Assumed Strain points
+                  gas0(3,4),      & ! der x/xita or eta at Assumed Strain points
+                  vas0(4),        & ! strains at Assumed Strain Points
+                  bs0(24,4),      & ! B matrix at Assumed strain Points
+                  baux0(24,2)       ! auxiliar B matrix
+ TYPE (ele18), POINTER :: e => NULL()         !pointer to an element data
+ LOGICAL :: newmt,   & ! TRUE if material constant computation necessary
+            bbar       ! TRUE to decouple shear and volumetric terms
+ INTEGER (kind=4) :: osec,     & !associated material of previous element
+                     nlayr,    & !
+                     mtype        !associated material type
+ REAL (kind=8) ::  km,gm,      & !bulk modulus and shear modulus
+                   eprop(12)     !elastic Material properties
+
+ INTEGER (kind=4) ielem,             & !element number
+                  ndofe,             & !number of DOFs of the elemnt
+                  is,kh,             & !isotropic hardening model
+                  isec,              & !associated material
+                  flag(ngaus),       & !flag for eigen-decomposition
+                  i,k,n,m              !different indexes
+
+ REAL (kind=8) stral(6),  & !local strains
+               strel(6),  & !local streses
+               staux(6),  & !local streses auxiliar
+               thick,     & !thickness (original)
+               minstr,    & !minimum strain to integrate trougth the thickness
+               dm(36),    & !Elastic integrated constitutive matrix
+               aux,jac(8)   !auxiliar value
+
+ REAL (kind=8) str(6),      & !stresses (different measures)
+               sig(6),      & !stresses (different measures)
+               stran(6),    & !C=U^2  also Log strains
+               x(3,nnode),  & !nodal coordinates of the element
+               x0(3,nnode), & !original nodal coordinates of the element
+               g(3,3),dg(3,3), & !deformation gradient
+               r(3,3),lb(3),& !eigen-pair in local system
+               delta,       & !volumetric strain/3, element volume
+               deltm,       & !Average volumetric strain
+               press,       & !first stress invariant (mean pressure)
+               rl(3,nnode)    !nodal internal equivalent forces
+ REAL (kind=8), ALLOCATABLE :: bmat0(:,:)               !B matrix
+                ! variables from first loop stored for second Gauss loop
+ REAL (kind=8) :: rv(3,3,ngaus), & ! eigevectors
+                  lbv(3,ngaus),  & ! eigenvalues
+                  stres(6,ngaus)   ! stresses
+ LOGICAL :: ttti     ! TRUE if Trougth The Thickness Integration is necessary
+
+
+ TYPE (section), POINTER :: sec => NULL()   !pointer to a section data
+ TYPE (mater), POINTER   :: mat => NULL()   !pointer to a material data
+
+
+  !Auxiliar variables for parallel code
+  INTEGER(kind=4):: piter,    & !
+                    num_chk     ! number of elements chunks
+
+
+ ndofe = 3*nnode
+
+ !initialize variables
+ e => heade                          !point to head of the list
+ !***  Computes nodal internal forces
+ osec    = -1    !no previous section
+ ALLOCATE( bmat0(ndofe,6) )
+
+ ELEMS: DO piter=1,nelem       !loop over the elements ()
+   IF (ierr == 1) CYCLE ELEMS        ! if there is an error CYCLE TO END (RETURN or EXIT are not allowed in parallel)
+   ielem = e%numel                   !element number
+   isec = e%matno                    !associated material
+   !     SET MATERIAL CONSTANTS
+   newmt = osec /= isec              !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+     osec = isec                     !keep present material
+     sec => psecs(isec)%p             !point to section
+     nlayr = sec%iprop(1)             !number of layers
+     !************************** STANDARD SOLID *****************************************
+     mat => sec%mtbas                !point to associated material
+     mtype = mat%mtype               !type of base material
+     ! ------------------------------------------------------------------------------------
+     ! ONLY MTYPES 1, 5, 6, 7, 8 and 92 ARE ALLOWED
+     SELECT CASE (mtype)
+     ! ------------------------------------------------------------------------------------
+     CASE (1)                        !Isotropic Elastic - Anisotropic Plastic  ( mtype == 1)
+       km = mat%prope(4)*3d0              ! bulk modulus * 3
+       gm = mat%prope(3)                  ! shear modulus
+       bbar = sbbar .AND. nnode == 8      !default
+       ! ------------------------------------------------------------------------------------
+     CASE (5)                        !Orthotropic Elastic - No Plasticity      ( mtype == 5)
+       eprop(1) = mat%prope(45)      !(1,1)   11-11
+       eprop(2) = mat%prope(46)      !(2,1)   11-22
+       eprop(3) = mat%prope(47)      !(3,1)   11-33
+       eprop(4) = mat%prope(52)      !(2,2)   22-22
+       eprop(5) = mat%prope(53)      !(3,2)   22-33
+       eprop(6) = mat%prope(59)      !(3,3)   33-33
+       eprop(7) = mat%prope(66)      !(4,4)   12-12
+       eprop(8) = mat%prope(73)      !(5,5)   13-13
+       eprop(9) = mat%prope(80)      !(6,6)   23-23
+       bbar  = .FALSE.                   !coupled shear and volumetric part
+     ! ------------------------------------------------------------------------------------
+     CASE (6)                        !Hyperelastic isotropic rubber            ( mtype == 6)
+       eprop(1:12) = mat%prope(7:18)
+       bbar  = .FALSE.                   !coupled shear and volumetric part
+     ! ------------------------------------------------------------------------------------
+     END SELECT
+     newmt = .FALSE.                        !same material than previous ?
+   END IF !newmt
+
+   x = coora(:,e%lnods)                   !*** computes present configuration
+   x0= coord(:,e%lnods)                   !*** computes original configuration
+   rl = 0d0                               !Initializes equivalent nodal forces
+   IF(bbar)deltm = 0d0                    !initializes meam volumetric strain
+   !   check
+   IF( shell )THEN !compute transvere shear strain components
+     tas(:,:) = MATMUL(x,e%nfdas)  !der x/x_3
+     gas(:,1) = (-x(:,1)-x(:,5)+x(:,4)+x(:,8))/4d0 !point A der x/eta
+     gas(:,2) = (-x(:,1)-x(:,5)+x(:,2)+x(:,6))/4d0 !point B der x/xita
+     gas(:,3) = (-x(:,2)-x(:,6)+x(:,3)+x(:,7))/4d0 !point C der x/eta
+     gas(:,4) = (-x(:,4)-x(:,8)+x(:,3)+x(:,7))/4d0 !point D der x/xita
+     DO i=1,4  !for each assumed strain point compute x_(xita,eta) . x_X_3
+       vas(i) = DOT_PRODUCT(tas(:,i),gas(:,i))
+     END DO
+     tas0(:,:) = MATMUL(x0,e%nfdas)  !der x/x_3
+     gas0(:,1) = (-x0(:,1)-x0(:,5)+x0(:,4)+x0(:,8))/4d0 !point A der x/eta
+     gas0(:,2) = (-x0(:,1)-x0(:,5)+x0(:,2)+x0(:,6))/4d0 !point B der x/xita
+     gas0(:,3) = (-x0(:,2)-x0(:,6)+x0(:,3)+x0(:,7))/4d0 !point C der x/eta
+     gas0(:,4) = (-x0(:,4)-x0(:,8)+x0(:,3)+x0(:,7))/4d0 !point D der x/xita
+     DO i=1,4  !for each assumed strain point compute x_(xita,eta) . x_X_3
+       vas0(i) = DOT_PRODUCT(tas0(:,i),gas0(:,i))
+     END DO
+     CALL bsma18(gas0,tas0,e%nfdas,bs0) !compute B_s matrix at sampling points  This is the one to be used
+     ! baux0 not used yet
+   END IF
+   !   Gauss point loop
+   DO k=1,ngaus
+     ! compute deformation gradient F and U^2=tp(F) F
+     g = MATMUL(x,e%cartd(:,:,k))  !deformation gradient
+     stran(1) = g(1,1)*g(1,1) + g(2,1)*g(2,1) + g(3,1)*g(3,1)  !U^2(1,1)
+     stran(2) = g(1,2)*g(1,2) + g(2,2)*g(2,2) + g(3,2)*g(3,2)  !U^2(2,2)
+     stran(3) = g(1,3)*g(1,3) + g(2,3)*g(2,3) + g(3,3)*g(3,3)  !U^2(3,3)
+     stran(4) = g(1,1)*g(1,2) + g(2,1)*g(2,2) + g(3,1)*g(3,2)  !U^2(1,2)
+     IF( shell )THEN  !shell version
+       staux(1) = ( (1d0-gpc(2,k))*vas(2) + (1d0+gpc(2,k))*vas(4))/2d0 !natural xita-x_3
+       staux(2) = ( (1d0-gpc(1,k))*vas(1) + (1d0+gpc(1,k))*vas(3))/2d0 !natural eta-x_3
+       stran(5) = e%jacin(1,1,k)*staux(1)+e%jacin(2,1,k)*staux(2) !x_1-x_3
+       stran(6) = e%jacin(1,2,k)*staux(1)+e%jacin(2,2,k)*staux(2) !x_2-x_3
+     ELSE  !standard version
+       stran(5) = g(1,1)*g(1,3) + g(2,1)*g(2,3) + g(3,1)*g(3,3)  !U^2(1,3)
+       stran(6) = g(1,2)*g(1,3) + g(2,2)*g(2,3) + g(3,2)*g(3,3)  !U^2(2,3)
+     END IF
+     flag(k) = 1                             !initializes to no spectral decomposition
+     !************************** STANDARD SOLID *****************************************
+     IF( nlayr == 0 )THEN            !standard solid section (not layered)
+       ! ------------------------------------------------------------------------------------
+       SELECT CASE (mtype)
+       ! ------------------------------------------------------------------------------------
+       CASE (1)                        !Isotropic Elastic ( mtype == 1)
+         IF( small )THEN               !Almansi strains (twice)
+           delta = (SUM(stran(1:3))-3d0)/6d0       !volumetric strain /3
+           stran(1:3) = stran(1:3)-delta*2d0-1d0   !shear strains (twice)
+           jac(k) = 1d0+3d0*delta
+         ELSE   ! Hencky (logarithmic) strains (volumetric and deviatoric parts)
+           !computes Hencky (logarithmic) strains (volumetric and deviatoric parts)
+           ! stran = twice the deviatoric strains    Delta = Ln(J)/3
+           CALL lgst18(stran,r,lb,'RESVPL',ierr,flag(k),delta)
+           jac(k) = EXP(3*delta)
+           IF( ierr == 1 )CYCLE ELEMS
+         END IF
+         stran = -stran; delta = -delta         ! sign of Strains is changed
+         str = gm*stran                         !Trial elastic shear stresses
+         IF(bbar) THEN
+           deltm = deltm + delta*e%dvol(k)     !use mean volumetric strain
+         ELSE
+           str(1:3) = str(1:3) + delta*km      !add press to deviatoric stress tensor
+         END IF
+       ! ------------------------------------------------------------------------------------
+       CASE (5)                        !Orthotropic Elastic - No Plasticity      ( mtype == 5)
+         IF( small )THEN               !Almansi strains (twice)
+           stran(1:3) = (stran(1:3)-1d0)/2d0   !Almansi Strains (sign changed)
+           jac(k) = 1d0+SUM(stran(1:3))
+         ELSE   ! Hencky (logarithmic) strains (volumetric and deviatoric parts)
+           ! stran = twice the deviatoric strains    Delta = Ln(J)/3
+           CALL lgst18(stran,r,lb,'RESVPL',ierr,flag(k),delta)
+           stran(1:3) = stran(1:3)/2 + delta
+           jac(k) = EXP(3*delta)
+         END IF
+         stran = -stran; delta = -delta         ! sign of Strains is changed
+         str(1) = eprop(1)*stran(1)+eprop(2)*stran(2)+eprop(3)*stran(3)
+         str(2) = eprop(2)*stran(1)+eprop(4)*stran(2)+eprop(5)*stran(3)
+         str(3) = eprop(3)*stran(1)+eprop(5)*stran(2)+eprop(6)*stran(3)
+         str(4) = eprop(7)*stran(4)
+         str(5) = eprop(8)*stran(5)
+         str(6) = eprop(9)*stran(6)
+       ! ------------------------------------------------------------------------------------
+       CASE (6)                        !Hyperelastic isotropic rubber    ( mtype == 6)
+         CALL eige18(stran,r,lb,flag(k))          !squared eigenvalues (V^-2)
+         jac(k) = SQRT(lb(1)*lb(2)*lb(3))
+         DO i=1,3
+           lb(i) = 1d0/lb(i)
+         END DO
+         CALL rubber3dn(eprop,lb,mat%matdef(8),str)   !compute principal BIOT stresses (1-3) and pressure (4)
+         IF( bbar ) deltm = deltm + str(4)*e%dvol(k)
+       ! ------------------------------------------------------------------------------------
+       END SELECT
+
+     !************************** LAYERED SOLID *************************************************
+     ELSE  !nlayr >= 1      layered solid (at integration point level)
+
+       ttti = .FALSE.
+       !Almansi strains
+       stran(1:3) = (1d0-stran(1:3))*0.5
+       stran(4:6) = -stran(4:6)
+       str(1:6) = MATMUL(RESHAPE((dm),(/6,6/)),stran(1:6))
+     END IF
+     ! store auxiliar values for second loop
+     stres(:,k) = str    !shear stresses
+     rv(:,:,k) =  r      !eigenvectors
+     IF( small ) THEN    ! and
+       lbv(:,k) = 1d0
+     ELSE
+       lbv(:,k) = lb     !eigenvalues
+     END IF
+   END DO  !k (loop to next integration point)
+
+   IF( bbar )THEN
+     IF( mtype == 1 )THEN
+       deltm = deltm/SUM(e%dvol)   !mean volumetric strain / 3
+       press = km*deltm     !mean pressure
+       ! deltm or presss must change sign
+       stres(1:3,:) = stres(1:3,:) + press  !sum on diagonal stresses for all Gauss points
+     ELSE IF( mtype == 6 )THEN
+       press = deltm/SUM(e%dvol)   !mean volumetric press / 3
+       stres(4,:) = press
+     END IF
+   END IF
+
+   DO k=1,ngaus         !second Gauss loop
+     ! recovers Gauss point values
+     str = stres(:,k)   !stresses
+     lb = lbv(:,k)      !eigenvalues (principal stretchings)
+     r  = rv(:,:,k)     !eigenvectors
+     g = MATMUL(x0,e%cartd(:,:,k))  !deformation gradient
+
+     IF(mtype == 6)THEN  !rubbers   (Kirchhoff stress tensor must be used)
+       ! store the stress vector (Kirchhoff stress tensor)
+       DO i=1,3
+        str(i) = str(i)*lb(i)+str(4)     ! tau = [ Phid_i*Li + Li Phiv_i
+       END DO
+       !Compute 3-D stresses with the spectral decomposition  R^T * Beta * R
+       sig(1) = r(1,1)*str(1)*r(1,1) + r(1,2)*str(2)*r(1,2) + r(1,3)*str(3)*r(1,3) !(1,1)
+       sig(2) = r(2,1)*str(1)*r(2,1) + r(2,2)*str(2)*r(2,2) + r(2,3)*str(3)*r(2,3) !(2,2)
+       sig(3) = r(3,1)*str(1)*r(3,1) + r(3,2)*str(2)*r(3,2) + r(3,3)*str(3)*r(3,3) !(3,3)
+       sig(4) = r(1,1)*str(1)*r(2,1) + r(1,2)*str(2)*r(2,2) + r(1,3)*str(3)*r(2,3) !(1,2)
+       sig(5) = r(1,1)*str(1)*r(3,1) + r(1,2)*str(2)*r(3,2) + r(1,3)*str(3)*r(3,3) !(1,3)
+       sig(6) = r(2,1)*str(1)*r(3,1) + r(2,2)*str(2)*r(3,2) + r(2,3)*str(3)*r(3,3) !(2,3)
+       e%stint(:,k) = sig ! keep Kirchhoff stress
+     ELSE
+       e%stint(:,k) = str ! keep average Kirchhoff stress for output
+       sig = str
+     END IF
+
+     !***   compute Int(B**t*sigma) on element level
+
+     sig = sig*e%dvol(k)*jac(k)    !Original dvol used (TLF)
+
+     !       actual configuration B Matrices
+     CALL bmat18(e%cartd(:,:,k),bmat0,g,nnode, shell)
+     IF( shell )THEN   !modify for trasnverse shear
+       baux0(:,1) =  (1d0-gpc(2,k))/2d0*bs0(:,2) + (1d0+gpc(2,k))/2d0*bs0(:,4)
+       baux0(:,2) =  (1d0-gpc(1,k))/2d0*bs0(:,1) + (1d0+gpc(1,k))/2d0*bs0(:,3)
+       bmat0(:,5) = e%jacin(1,1,k)*baux0(:,1)+e%jacin(2,1,k)*baux0(:,2)
+       bmat0(:,6) = e%jacin(1,2,k)*baux0(:,1)+e%jacin(2,2,k)*baux0(:,2)
+     END IF
+     CALL proma3(rl(1,1),bmat0(1,1),sig(1),ndofe,6,.FALSE.)  !nodal contributions
+   END DO
+
+   DO i=1,nnode             !for each node in the element
+     n = e%lnods(i)     !node
+     resid(1:3,n) = resid(1:3,n) - rl(1:3,i) !sum internal force
+   END DO
+
+   e => e%next          !point to next element in the list
+ END DO ELEMS
+ !release memory
+ DEALLOCATE (bmat0)
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE resv18i

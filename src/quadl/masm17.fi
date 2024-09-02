@@ -1,0 +1,143 @@
+ SUBROUTINE masm17(ndime,heade,emass,mass,sumat,lumpd,ngaus,ifpre,nnode,coord,ntype)
+
+ ! compute lumped/consistent mass  for element 17 (2-D solid TLF)
+
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd
+ INTEGER (kind=4), INTENT(IN) :: ndime,ngaus,ifpre(:,:),nnode,ntype
+ REAL (kind=8), INTENT(IN) :: coord(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele17 ), POINTER :: heade
+
+ REAL (kind=8), PARAMETER :: twopi=6.283185307179586
+ INTEGER (kind=4) :: isec,idofn,lm(ndime,nnode),osec,g,i,j,k,ii,n,l,ng,ngm,nv
+ REAL (kind=8) :: suma,voli,rhoel,m(nnode),xita(3),w(3),dvo(9),x(2,nnode), &
+                  jm(2,2),thick,weigt,r
+ REAL (kind=8), ALLOCATABLE :: ms(:),a(:),sh(:,:),der(:,:,:)
+ TYPE( ele17 ), POINTER :: e
+ TYPE (section), POINTER :: sec
+
+ INTEGER (kind= 4) posmt
+ posmt(nv,i,j) = (nv-i)*(i-1)/2+j  !position i,j in mass(nxn)
+
+ ! Note: consistent mass matrix requires at least 2x2 integration
+ IF( nnode == 4 )THEN
+   ng = 2
+   ALLOCATE( a(10), ms(36) )
+ ELSE IF( nnode == 8 ) THEN
+   ng = 3
+   ALLOCATE( a(36), ms(136) )
+ END IF
+ CALL gaussq (ng ,xita ,w )
+ ngm = ng*ng          !number of gauss points for the matrix
+ ALLOCATE(sh(nnode,ngm),der(nnode,2,ngm))
+ nv = 4*nnode
+
+ suma=0.
+ osec = -1
+
+ ms = 0D0
+ g = 0
+ DO i=1,ng
+   DO j=1,ng
+     g = g+1
+     CALL shape3(der(1,1,g),sh(1,g),xita(j),xita(i),nnode)
+   END DO
+ END DO
+
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED (e) )EXIT
+   isec = e%matno
+   IF( osec /= isec )THEN
+     sec => psecs(isec)%p
+     rhoel = sec%mtbas%prope(5)                !material density
+     thick = sec%rprop(1)                      !thickness for plane stress
+     osec = isec
+   END IF
+   m = 0
+   IF(.NOT.lumpd) a = 0d0
+
+   IF( ngm == ngaus )THEN  !same number of points
+     dvo(1:ngm) = e%dvol           !use computed values
+   ELSE                    !different number of points
+     !     recompute   (thick is missing)
+     x = coord(:,e%lnods)
+     g = 0
+     DO i=1,ng
+       DO j=1,ng
+         g = g+1
+         jm = MATMUL(x,der(:,:,g)) !jm(i,j) = d[x(i)]/d[xita(j)]
+         dvo(g)= (jm(1,1)*jm(2,2)-jm(1,2)*jm(2,1))*w(i)*w(j)           !Gauss point area
+         IF( ntype == 1 ) dvo(g)= dvo(g)*thick                         !thickness por plane stress
+         IF( ntype == 3 )THEN                             !2Pi * r for axilsymmetric problems
+           r = DOT_PRODUCT( x(1,:),sh(:,g) )
+           thick = r*twopi
+           dvo(g)= dvo(g)*thick
+         END IF
+       END DO
+     END DO
+   END IF
+   !
+   weigt = 0d0
+   DO g=1,ngm
+
+     voli = dvo(g)*rhoel
+     suma = suma + voli
+     weigt= weigt+ voli
+
+     ii = 0                   !Initializes Position in matrix
+     DO n = 1,nnode           !For each node
+       IF( nnode == 4 )THEN
+          m(n) = m(n) + sh(n,g)*voli  !associated (lumped) mass
+       ELSE
+          m(n) = m(n) + sh(n,g)**2*voli  !associated (lumped) mass
+       END IF
+        IF(.NOT.lumpd) THEN    !Consistent matrix
+           DO l = n,nnode       !for each node
+             ii = ii+1          !position in matrix
+             a(ii) = a(ii) + sh(n,g)*sh(l,g)*voli
+           END DO
+        END IF     !.NOT.lumpd
+     END DO     !n=1,nnode
+   END DO     !g=1,ngaus
+
+   !---generates lumped mass matrix proportional to diagonal
+   IF( nnode == 8 )THEN  !lumped matrix for 8-node element
+     weigt = weigt/SUM(m(1:nnode))
+     m = m*weigt
+   END IF
+
+   DO n=1,nnode
+     l = e%lnods(n)
+     DO idofn=1,ndime
+       emass(idofn,l)=emass(idofn,l)+m(n)
+     END DO
+   END DO
+
+   IF(.NOT.lumpd) THEN
+                 !consistent mass matrix  Assembles over MASS(maxa)
+     i = 0                            ! Position in matrix A initialization
+     g = 0                            ! elemental DOF initialization
+     DO n = 1,nnode                   ! For each nodee
+       j = (n-1)*ndime                ! Initializes Column position in M
+       DO l = n,nnode                 ! For each node
+         i = i+1                      ! Matrix position in A
+         k = (l-1)*ndime              ! Initializes Row position in M
+         DO ii = 1,ndime              ! For each direction in space
+           ms(posmt(nv,j+ii,k+ii)) = a(i)
+         END DO
+       END DO
+     END DO
+     lm = ifpre(1:2,e%lnods)
+     CALL ensmat(2*nnode,lm(1,1),ms(1),mass(1))
+   END IF
+
+   e => e%next
+ END DO
+ !IF(iwrit == 1) &
+ WRITE(lures,"(//'  total mass for QUADL element :', e15.7)",ERR=9999)suma
+ sumat = sumat + suma
+ RETURN
+ 9999 CALL runen2(' ')
+ END SUBROUTINE masm17

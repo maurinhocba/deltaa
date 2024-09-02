@@ -1,0 +1,221 @@
+ SUBROUTINE stiff7(heade, coord, euler, gstif, force, ansmm, nnass, nstre, &
+                   zigzag, posgp, shape, omat, ap1)
+!********************************************************************
+!
+!***   evaluation of tangent stiffness matrix for shell elements
+!
+!********************************************************************
+ IMPLICIT NONE
+ INTEGER (kind=4), PARAMETER :: ndime=3
+!***  routine parameters
+ INTEGER (kind=4) :: nstre
+ INTEGER (kind=4), INTENT(IN) :: ansmm,  &
+                                 nnass
+ REAL (kind=8), INTENT(IN) :: coord(:,:), euler(:,:), posgp(:,:), shape(:,:), &
+                              omat(:,:,:,:), ap1(:,:,:)
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:),force(:)
+ TYPE (ele07), POINTER :: heade
+ LOGICAL, INTENT(IN) :: zigzag
+!***  local variables
+ TYPE (ele07), POINTER :: e
+ LOGICAL :: plast,newmt,dum
+ INTEGER (kind=4) ielem,isec,np,matty,osec,nlayr,nvarl,ndofe,secty
+ INTEGER (kind=4) i,j,k,node,g,jj
+ REAL (kind=8), ALLOCATABLE :: stiff(:),bmatx(:,:,:)
+ REAL (kind=8) :: bm(ndime,nnode,nasmm),bs(5,nnode,nnass),bb(5,2),line(30)
+ REAL (kind=8) :: thick,sf(3),dmatx(15),prop(105),d(8,8),zeta,f(3,3),f2,daux(105),dm(105)
+ REAL (kind=8) :: x(ndime,nnode),lb(ndime,2,nnode),t(ndime,nnode),tt(ndime,ngaus),   &
+                  dx(ndime,2,ngaus),dt(ndime,2,ngaus),dfi(ndime,3,3),ts(ndime,nnass),&
+                  dxt(ndime,nnass),strdv(nstre),long,otf(9,3)                  !,de(5,5),di(5),yp(4),al(6)
+ TYPE(section), POINTER :: sec
+ TYPE(mater), POINTER :: mat
+ INTERFACE
+   INCLUDE 'deriv6.h'
+   INCLUDE 'vecuni.h'
+ END INTERFACE
+!***   loop over all the elements
+
+ osec = -1
+ e => heade
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = e%numel                   ! to print erros
+   isec = e%matno                    ! associated section
+   newmt = osec /= isec
+   IF(newmt)THEN                     !if new material, get properties
+     sec => psecs(isec)%p              !point to section
+     secty = sec%secty                 !section type may be 14 (solid) & 15 (multilayered)
+     matty = sec%secdef(3)             !14 or 15
+     IF( sec%mabas > 0 )THEN           ! secty=14:  if one-material section then
+       mat => sec%mtbas                   !point to material properties
+       plast = matty <= 2 .AND. mat%matdef(3) > 1     !isotropic & elastic-plastic
+       nlayr = sec%iprop(1)                           !number of integration layers
+     ELSE     !for sectyp = 15
+       plast = .FALSE.    !no plasticity is possibe
+       nlayr = 1          !integrated
+     END IF
+     thick = sec%rprop(1) !original thickness
+     ndofe = 5
+     IF( secty == 15 .AND. zigzag )  ndofe = 7
+     nvarl = nnode*ndofe
+     IF( ALLOCATED(stiff)) DEALLOCATE(stiff,bmatx)
+     ALLOCATE(stiff(nvarl*(nvarl+1)/2))
+     IF(matty == 0 )THEN
+       np = 12
+       !CALL dmatx7(sec%rprop(6:10),sec%rprop(np:np+16),dum,dum,dum,dum,newmt,de,di,yp,al) !no effect in computations
+     ELSE
+       np = MIN(21,sec%secdef(2))
+       IF(matty == 5)THEN
+         IF(sec%rprop(4) /= 0d0 )THEN
+           sf = sec%rprop(4)
+         ELSE
+           sf = sec%rprop(71:73)
+         END IF
+      END IF
+     END IF
+     i = sec%secdef(2)            !size of array rprop
+     j = MIN(20,i)                    !avoids problems in debug
+     dmatx(1:j-5) = sec%rprop(6:j)
+     IF(i > np )prop(1:i+1-np) = sec%rprop(np:i)
+     ALLOCATE(bmatx(ndofe,nnode,nstre))
+     bs  = 0d0                        ! B matrix for ANS shear model
+     bmatx = 0d0                        ! Global B matrix
+     IF( ansmm > 0 )bm = 0d0         ! B matrix for ANSMM
+     osec = isec
+   END IF
+   !  zero the elemental stiffness matrix
+   stiff = 0d0
+
+   x  = coord(:,e%lnods)             !mid surface position
+   lb(:,1,:) = euler(1:3,e%lnods)    !reduced local system
+   lb(:,2,:) = euler(4:6,e%lnods)    !for rotations definition
+   t  = euler(7:9,e%lnods)           !directors
+
+   !                computes b-membrane matrix
+   IF( ansmm > 0 ) THEN
+     IF(ansmm == 1) THEN                     ! Assumed membrane using vertex nodes
+       DO i = 1,3
+         CALL proma1(dfi(1,1,i),x(1,1),dn(1,1,i),3,2,nnode) ! computes derivatives at assumed strain points
+       END DO
+     END IF
+     IF(ansmm == 2) THEN                     ! Assumed membrane subtriangles mid-side points
+       i = 0
+       DO k=1,3
+         DO j=1,3
+           i = i+1
+           CALL proma1(dfi(1,j,k),x(1,1),ntan2(1,i),ndime,1,nnode) ! computes derivatives at assumed strain points
+         END DO
+       END DO
+     END IF
+     CALL bmmt07(ansmm,dfi,bm)
+   END IF
+   !                computes b-shear matrix
+   IF( nnass > ngaus )THEN
+     DO i=1,nnass
+       ts(:,i) = MATMUL(t,nsha(:,i))
+       CALL vecuni(3,ts(:,i),long)
+       dxt(:,i) = MATMUL(x,ntan(:,i))
+     END DO
+     CALL bshem7(nnass,dxt,ts,lb,bs)
+   END IF
+   !     director field, mid-surface & director derivatives at gauss points
+   CALL deriv6(ngaus,shape,e%cartd,x,t,tt,dx,dt)
+   DO g=1,ngaus
+     !       computes b matrix , bending & membrane
+     CALL bmatx7(ansmm,e%cartd(:,:,g),lb,bmatx,dx(:,:,g),dt(:,:,g),ndofe,e%nangl,shape(:,g),nnass,tt(:,g))
+     IF( ansmm > 0 )THEN      !For ANS membrane models
+        !  Transpose bar T
+        f = RESHAPE( (/     e%jacin(1,1,g)**2,                 e%jacin(1,2,g)**2,             e%jacin(1,1,g)*e%jacin(1,2,g), &
+                            e%jacin(2,1,g)**2,                 e%jacin(2,2,g)**2,             e%jacin(2,1,g)*e%jacin(2,2,g), &
+                        2d0*e%jacin(1,1,g)*e%jacin(2,1,g), 2d0*e%jacin(1,2,g)*e%jacin(2,2,g), e%jacin(1,1,g)*e%jacin(2,2,g)  &
+                                                                                             +e%jacin(1,2,g)*e%jacin(2,1,g)/),(/3,3/))
+        otf = MATMUL(TRANSPOSE(omat(:,:,2,g)),f)        ! O^t x T^t
+        DO node=1,nnode
+          bmatx(1:3,node,1:3) = MATMUL(bm(:,node,:),otf)
+        END DO
+     END IF
+     IF( nnass > ngaus )THEN
+       ! shear matrix
+       DO node=1,nnode
+         bb = MATMUL(bs(:,node,:),TRANSPOSE(ap1(:,:,g)))  !ap1(2,nnass,ngaus)
+         bmatx(1:5,node,7:8) = MATMUL(bb,TRANSPOSE(e%jacin(:,:,g)))
+       END DO
+     END IF
+
+     IF(plast) THEN
+       !      computes the consistent elasto-plastic constitutive matrix
+       IF( nlayr == 1 )THEN
+         CALL elpmo6(matty,e%ambda(2,g),prop(1),dmatx(1),e%strsg(1,g),e%strap(1,g,1), &
+                     e%ehist(1,g),dx(1,1,g),dx(1,2,g),tt(1,g),d(1,1))
+       ELSE
+         CALL elpms6(nlayr,e%ambda(2,g),dmatx(1),                           &
+                     e%strap(1,g,1),e%strap(1,g,2),e%stres(1,1,g),          &
+                     dx(1,1,g),dx(1,2,g),dt(1,1,g),dt(1,2,g),d(1,1),thick)
+       END IF
+     ELSE
+       IF( nlayr == 1 )THEN
+         IF( newmt )THEN
+           IF( ndofe == 5 )THEN
+             CALL modps6(matty,d(1,1),dmatx(1),prop(1),sf(1))
+           ELSE
+             CALL dmat06(dm,dmatx)
+           END IF
+           newmt = .FALSE.
+         END IF
+       ELSE
+         f2 = thick*thick/12d0*e%ambda(2,g)**2
+         d(1,1) = dmatx(1)*thick
+         d(2,1) = dmatx(2)*thick
+         d(2,2) = dmatx(3)*thick
+         d(3,3) = dmatx(4)*thick
+         d(4,4) = d(1,1)*f2
+         d(5,4) = d(2,1)*f2
+         d(5,5) = d(2,2)*f2
+         d(6,6) = d(3,3)*f2
+         d(7,7) = dmatx(5)*thick
+         d(8,8) = d(7,7)
+       END IF
+     END IF
+     !       scales d matrix & stress vector for numerical integration
+     IF( ndofe == 5 )THEN
+       k = 0
+       DO i = 1,nstre
+         DO j = i,nstre
+           k = k+1
+           daux(k) = d(j,i)*e%dvolu(g)
+         END DO
+         strdv(i) = e%strsg(i,g)*e%dvolu(g)
+       END DO
+     ELSE
+       daux = e%dvolu(g)*dm
+       strdv(:) = e%strsg(:,g)*e%dvolu(g)
+     END IF
+     CALL btdbpr(bmatx(1,1,1),daux(1),stiff(1),nvarl,nstre)
+     !                  geometric part due to  membrane & bending stresses
+     CALL kgeom7(ndofe,ansmm,e%cartd(:,:,g),lb,t,dx(:,:,g),strdv,stiff)
+   END DO  !Gauss point loop
+   !     adds the geometric part due to shear for assumed strain elements
+   !CALL kgshm7(ndofe,nnass,e%qbar,dxt,t,lb,stiff)
+   !     adds the geometric part due to membrane for assumed strain elements
+   IF(ansmm > 0) CALL kgmt07(ansmm,ndofe,nvarl,e%beta,stiff)
+
+   CALL stiaux(nnode,e%lnods,nvarl,ndofe,stiff(1),force(1),gstif(1) )
+  ! WRITE(58,"('stiffness matrix element',i5)")e%numel
+  ! jj = 1
+  ! DO i=1,nvarl
+  !   k = i
+  !   DO j=1,i-1
+  !     line(j) = stiff(k)
+  !     k = k + nvarl-j
+  !   END DO
+  !   DO j=i,nvarl
+  !     line(j) = stiff(jj)
+  !     jj = jj + 1
+  !   END DO
+  !   WRITE(58,"(29(E19.12,','),E19.12,';')")line
+  ! END DO
+   e => e%next
+ END DO
+ RETURN
+
+ END SUBROUTINE stiff7

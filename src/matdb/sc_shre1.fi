@@ -1,0 +1,129 @@
+ SUBROUTINE sc_shre1( sec )
+ !            --------------------------------
+ !            input material properties for
+ !            1 shear deformable 2-D shell/beam (SHREV)
+ !            2 classic linear 2-D beam (SHREV NTYPE=4)
+ !            3 classic rotation-free 2-D shell/beam (BEAM2)
+ !
+
+ IMPLICIT NONE
+ TYPE (section), POINTER :: sec
+
+ ! material types allowed for this section
+ INTEGER (kind=4) :: matsa =  1
+ INTEGER (kind=4) :: matno,rtype,nlayr
+ REAL (kind=8) :: thick,auxil,young,poiss,width,area,inert
+ LOGICAL :: found,plast
+ TYPE (mater), POINTER :: mat
+
+
+ sec%secty = 43         !shell of revolution
+
+ CALL listen('SHREV1')  !read a line
+
+ matno    = getint('NUMAT ', 1 ,'!Associated Material ..............')
+ ! search for associated material
+ CALL mat_search(matno,found,sec%mtbas)  !search base material
+ sec%mabas = matno                       !material label
+ IF(.NOT.found) CALL runend ('SHREV1: NOT FOUND ASSOCIATED MATER ')
+
+ IF( sec%mtbas%mtype /= matsa)  & !check if the material is correct
+      CALL runend('SHREV1: Invalid material association')
+
+ !readm = exists('READMA')  !read elastic matrix ?
+ plast = .FALSE.
+
+ nlayr = getint('NLAYR ',   1,' NUMBER OF LAYERS .................')
+ IF ( nlayr  <= 0) CALL runend('SHREV1: VERIFY NUMBER OF LAYERS ')
+ thick = getrea('THICK ',1.D0,' Thickness ........................')
+ IF ( thick == 0.D0) CALL runend('SHREV1: VERIFY THICKNESS ')
+
+ sec%secdef(1) =  2   !size of integer array
+ sec%secdef(2) =  35  !size of real array
+
+
+ IF( exists('LARGE ') )THEN
+   sec%secdef(3) =  1   !stress resultant isotropic with large strains
+ ELSE
+   sec%secdef(3) =  2   !stress resultant isotropic with small strains
+ END IF
+ IF( sec%mtbas%matdef(3) > 1 ) THEN
+   plast = .TRUE.
+ END IF
+ rtype = 0   !isotropic with standard elastic matrix
+
+
+ ALLOCATE (sec%iprop(sec%secdef(1)), sec%rprop(sec%secdef(2)))
+
+ SELECT CASE (rtype)
+ CASE (0)
+   young   = sec%mtbas%prope(1)
+   poiss   = sec%mtbas%prope(2)
+
+   ! For PLANE STRESS
+
+   !         elastic constants
+   width = getrea('WIDTH ',1d0,' Width for 2-D Beam Element........')
+   sec%rprop(10) = width
+   area  = width*thick
+   inert = area*thick**2/12d0
+   area = getrea('AREA  ',area,' Section for 2-D Beam Element........')
+   inert= getrea('INERT ',inert,' Inertia for 2-D Beam Element........')
+
+   !         elastic matrix coeficients
+   auxil = young/(1d0+poiss)/2d0
+   sec%rprop(11) = area*young
+   sec%rprop(12) = inert*young
+   sec%rprop(13) = 5d0/12d0*young*area/(1d0+poiss)
+
+   ! For PLANE STRAIN or AXILSYMMETRIC
+
+   !         elastic matrix coeficients
+   auxil = young*thick/(1.0-poiss*poiss)
+   sec%rprop(21) = auxil
+   sec%rprop(22) = auxil*poiss
+   auxil = thick*thick/12d0
+   sec%rprop(23) = sec%rprop(21)*auxil
+   sec%rprop(24) = sec%rprop(22)*auxil
+   sec%rprop(25) = 5d0*thick*young/(1d0+poiss)/12d0
+ END SELECT
+ sec%iprop(1) = nlayr
+ sec%iprop(2) = 1
+
+ sec%rprop(1) = thick
+ sec%rprop(2) = getrea('MINTHI',0.D0,' Mimimum Thickness Ratio...........')
+ sec%rprop(3) = getrea('MAXTHI',1.D3,' Maximum Thickness Ratio...........')
+ sec%rprop(4) = area   !area
+
+ ! plastic parameters for stress resultant solid isotropic
+ ! variables for plasticity
+ IF( .NOT. plast ) RETURN
+
+ mat => sec%mtbas
+ sec%rprop(5:8) = mat%propp(1:4)
+ sec%rprop(9) = mat%propp(6)
+
+ ! For PLANE STRESS
+
+ sec%rprop(14) = thick*thick/12d0
+ sec%rprop(15) = 1d0/area**2                                    !coefn
+ sec%rprop(16) = 1d0/(area*thick/4d0)**2                        !coefm
+ sec%rprop(17) = 2d0/SQRT(3d0)/area**2/thick                    !coenm
+ sec%rprop(18) = (young*area+sec%rprop(9))*2d0/3d0              !pdmat1
+ sec%rprop(19) = (young*area*5d0/12d0/(1d0+poiss)+sec%rprop(9))*2d0/area**2  !zeta
+
+ ! For PLANE STRAIN or AXILSYMMETRIC
+
+ sec%rprop(26) = thick*thick/12d0                          !f1
+ sec%rprop(27) = (1d0/thick)**2                            !coefn
+ sec%rprop(28) = (4d0/thick/thick)**2                      !coefm
+ sec%rprop(29) = 2d0/SQRT(3d0)/thick**3                    !coenm
+ sec%rprop(30) = young*thick/(1-poiss)                     !ddmat1
+ sec%rprop(31) = young*thick/(1+poiss)                     !ddmat2
+ sec%rprop(32) = 5.0d0/6.0d0*sec%rprop(30)/2d0             !gkh
+ sec%rprop(33) = (sec%rprop(30)+sec%rprop(9))/3d0          !pdmat1
+ sec%rprop(34) = (sec%rprop(31)+sec%rprop(9))*1d0          !pdmat2
+ sec%rprop(35) = (sec%rprop(32)+sec%rprop(9))*2d0/thick**2 !zeta
+
+ RETURN
+ END SUBROUTINE sc_shre1

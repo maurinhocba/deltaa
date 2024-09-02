@@ -1,0 +1,57 @@
+ SUBROUTINE resvp2(ndime,nelem,coora,resid,heade,ttime,coord)
+ !********************************************************************
+ !
+ !***   evaluation of integral (b)**t*(sigma) for truss elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ INTEGER (kind=4) ndime,nelem
+ REAL (kind=8) coora(:,:),resid(:,:),ttime,coord(:,:)
+ TYPE(ele02), POINTER :: heade
+
+ INTEGER (kind=4) ielem,l,n,imat,nehist,gtype,nstre,omat
+ REAL (kind=8) x(ndime,nnode),bts(ndime,nnode),es,xl,dx(ndime),facto, &
+               x0(ndime,nnode)
+ TYPE(ele02), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL :: newm
+
+ !***  loop over all the elements
+ omat = -1               !initializes
+ e => heade              !point to first element
+ DO ielem = 1,nelem      !loop over the set of elements
+   imat  = e%matno          !section of present element
+   newm = imat /= omat      !compare with previous section
+   IF ( newm )THEN            !if a new section
+     sec => psecs(imat)%p                !search and point
+     omat = imat                         !remember section number
+     gtype = sec%iprop(1)                !type of stress-strain relation
+   END IF
+   !       gathers the actual coordinates
+   x = coora(:,e%lnods)                  !present coordinates
+   IF( gtype == 4 )THEN       !for linear problems
+     x0 = coord(:,e%lnods)       !original coordinates
+     x  = x - x0                 !displacements
+     dx = x0(:,nnode) - x0(:,1)  !original vector
+     es = (DOT_PRODUCT(x(:,2),dx)-DOT_PRODUCT(x(:,1),dx))/e%gausv(1)**2
+     xl = 1d0
+   ELSE                       !for non-linear problems
+     dx = x(:,nnode) - x(:,1)    !distance vector
+     CALL stra02(ndime,gtype,e%gausv(1),es,dx,xl) !computes strain measure
+   END IF
+
+   CALL stre02 (sec, es, e%gausv(:), .TRUE. ,newm, xl) !computes stress
+
+   facto = e%gausv(4) / e%gausv(1) !e%gausv(1) = L0
+
+   bts(1:ndime,1) = - facto*dx
+   bts(1:ndime,2) =   facto*dx
+
+   DO n = 1,nnode
+     l = e%lnods(n)
+     resid(1:ndime,l) = resid(1:ndime,l) + bts(1:ndime,n)
+   END DO
+   e => e%next
+ END DO
+ RETURN
+ END SUBROUTINE resvp2

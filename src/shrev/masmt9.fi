@@ -1,0 +1,123 @@
+ SUBROUTINE masmt9(lumpd,nelem,nnode,ngaus,shape,weigh, &
+                   emass,mass,sumat,heade,ntype,ifpre,ndofe,zigzag)
+ !********************************************************************
+ !
+ !***  evaluates mass matrix for beam/shell elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd,zigzag
+ INTEGER (kind=4), INTENT(IN) :: nelem,nnode,ndofe,ngaus,ntype,ifpre(:,:)
+ REAL (kind=8), INTENT(IN) :: shape(:,:),weigh(:)
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele09 ), POINTER :: heade
+
+ !        local variables
+ INTEGER (kind=4) ielem,g,i,j,k,l,n,nposn,isec,lm(ndofe*nnode),nvar,osec,matty
+ REAL    (kind=8) dvolu,a(nnode),b(6),tmass,rmass,ms(78),sume1,thick,armas
+ TYPE( ele09 ), POINTER :: e
+ REAL (kind=8),PARAMETER :: twopi=6.283185307179586d0
+ TYPE(section), POINTER :: sec
+ INTEGER (kind=4) poesti
+ poesti(i,j,n) = (2*n-i)*(i-1)/2+j    ! position i,j in ms(nxn)
+
+ osec = -1
+ sume1 = 0d0
+ e => heade
+ DO ielem=1,nelem
+   isec = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     matty = sec%secdef(3)
+     thick = sec%rprop(1)
+     IF( matty > 2 )THEN !laminate
+       tmass = sec%rprop(5)   !surface density
+       rmass = sec%rprop(25)  !rotary inertia
+       armas = sec%rprop(26)  !rotary inertia, additional DOF
+     ELSE
+       IF(ntype == 1)THEN
+         tmass = sec%mtbas%prope(5)*sec%rprop(4)
+       ELSE IF(ntype == 2 .OR. ntype == 3 ) THEN
+         tmass = sec%mtbas%prope(5)*thick
+       ELSE IF(ntype == 4)THEN
+         tmass = sec%mtbas%prope(5)*sec%rprop(4)
+       END IF
+       rmass = tmass*thick**2/12
+     END IF
+     osec  = isec
+   END IF
+
+   a = 0d0
+   b = 0d0
+
+   IF( ntype /= 4 )THEN
+     DO g = 1,ngaus
+       dvolu = weigh(g)*e%jac(g)
+       IF(ntype == 3) dvolu = dvolu*e%r0(g)*twopi
+       i = 0
+       DO n = 1,nnode
+         a(n) = a(n) + shape(n,g)*dvolu
+         IF(.NOT.lumpd) THEN
+           DO l = n,nnode
+             i = i+1
+             b(i) = b(i) + shape(n,g)*shape(l,g)*dvolu
+           END DO
+         END IF
+       END DO
+     END DO
+   ELSE
+     dvolu = e%jac(1)/2d0
+     a(1:2) = dvolu
+     IF(.NOT.lumpd) THEN
+       dvolu = dvolu/3d0
+       b(1:3) = dvolu*(/ 2d0,1d0,2d0 /)
+     END IF
+   END IF
+   nvar = nnode*ndofe
+   j=1
+   DO n=1,nnode
+     l = e%lnods(n)
+     emass(1:2,l) = emass(1:2,l) + a(n)*tmass
+     emass(3,l) = emass(3,l) + a(n)*rmass
+     IF( ndofe == 4 )emass(4,l) = emass(4,l) + a(n)*armas
+   END DO
+   sume1 = sume1 + SUM(a)*tmass
+   IF(.NOT.lumpd) THEN
+     nposn = nvar*(nvar+1)/2
+     ms(1:nposn) = 0d0
+     i = 0
+     DO n = 1,nnode
+       j = (n-1)*3+1
+       DO l =n,nnode
+         i = i+1
+         k = (l-1)*3+1
+         nposn = poesti(j,k,nvar)
+         ms(nposn) = b(i)*tmass
+         nposn = poesti(j+1,k+1,nvar)
+         ms(nposn) = b(i)*tmass
+         nposn = poesti(j+2,k+2,nvar)
+         ms(nposn) = b(i)*rmass
+         IF( ndofe == 4 )THEN
+            nposn = poesti(j+3,k+3,nvar)
+            ms(nposn) = b(i)*armas
+         END IF
+       END DO
+     END DO
+
+     g = 0
+     DO n=1,nnode
+       l = e%lnods(n)
+       DO j = 1,ndofe
+         g = g+1
+         lm(g) = ifpre(j,l)
+       END DO
+     END DO
+     CALL ensmat(nvar,lm(1),ms(1) ,mass(1))
+   END IF
+   e => e%next
+ END DO
+ WRITE(lures,"(//'  total mass for beam/shell element :', e15.7)")sume1
+ sumat = sumat + sume1
+
+ RETURN
+ END SUBROUTINE masmt9

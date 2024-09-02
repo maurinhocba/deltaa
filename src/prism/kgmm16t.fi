@@ -1,0 +1,51 @@
+ SUBROUTINE kgmm16t (cd,sh,s,ji,stiff,nn)
+ !
+ ! compute geometric stiffness for PRISM - transverse shear
+ !
+
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER(kind=4) :: nn
+ REAL (kind=8), INTENT(IN) ::  cd(6,3),  & !cartesian (y3)  derivatives at points
+                               sh(2),    & !shape functions
+                               ji(2,2),  & !inverse jacobian
+                               s(2)        !stresses * dvol
+ REAL (kind=8), INTENT(OUT) :: stiff(*)    !stiffness matrix
+ ! local variables
+ INTEGER (kind=4) i,j,k,l,n,g,pos,nv2
+ REAL (kind=8) :: value                 !diagonal value to add
+ REAL (kind=8) :: sa(2),q(3),nd(6,3)    !stress measures
+ INTEGER (kind=4) poesti
+ poesti(nv2,i,j) = (nv2-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+
+ nv2 = 6*nn
+
+ sa(:) = MATMUL(ji,s)
+ q(1) = (-    sa(1)+    sa(2))/3d0
+ q(2) = (-    sa(1)-2d0*sa(2))/3d0
+ q(3) = (+2d0*sa(1)+    sa(2))/3d0
+
+ nd(:,1) = (/   0d0, -sh(1),  sh(1),    0d0, -sh(2),  sh(2) /)*q(1)
+ nd(:,2) = (/+sh(1),    0d0, -sh(1), +sh(2),    0d0, -sh(2) /)*q(2)
+ nd(:,3) = (/-sh(1),  sh(1),   0d0,  -sh(2),  sh(2),    0d0 /)*q(3)
+
+ l = 0           ! initializes DOF position I
+ DO i=1,6        ! for each node
+   n = l         ! initializes DOF position J
+   DO j=i,6      ! for each node (upper part)
+     value = 0d0
+     DO g=1,3     !for each assumed strain point
+       value = value + nd(i,g)*cd(j,g) + nd(j,g)*cd(i,g)
+     END DO
+     DO k=1,3    ! for each DOF (diagonal only)
+       pos = poesti(nv2,l+k,n+k)   ! (I,J)
+       stiff(pos) = stiff(pos) + value
+     END DO
+     n = n + 3   ! increment DOF position J
+   END DO
+   l = l + 3     ! increment DOF position I
+ END DO
+
+ RETURN
+ END SUBROUTINE kgmm16t

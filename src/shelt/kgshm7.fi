@@ -1,0 +1,86 @@
+ SUBROUTINE kgshm7(nnode,ndofn,q,x,t,lb,stiff)
+ !******************************************************************************
+ !
+ !     this routine compute THEN geometric stifness due to shear stresses
+ !     for the asummed shear strain shell elements
+ !
+ !******************************************************************************
+ IMPLICIT NONE
+ !                  routine parameters
+ INTEGER (kind=4), INTENT(IN) :: nnode,ndofn
+ REAL (kind=8), INTENT(IN) :: q(:),x(:,:),t(:,:),lb(:,:,:)
+ REAL (kind=8), INTENT(IN OUT) :: stiff(:)
+ !                  local variables
+ INTEGER (kind=4) i,j,k,l,n,ni,nj,poses,idof,jdof,nvarl
+ REAL    (kind=8) ckgeo,coef1,coef2,dx(3)
+ !     local functions
+ INTEGER (kind=4)  poesti
+ poesti(i,j,n) = (2*n-i)*(i-1)/2+j    ! position i,j in estif(nxn)
+
+ nvarl = nnode*ndofn
+ !     for every assumed strain point
+  DO k = 1,ngamm
+    !           evaluates the configuration derivative in direction l
+    !dx = MATMUL(x,nfdas(1:nnode,l,k))
+    dx = nd(1)*x(:,kk(1,k))+ nd(2)*x(:,kk(2,k)) +nd(3)*x(:,kk(3,k))
+    IF( MOD(k,2) == 0 ) dx = -dx
+    !           for every node (row)
+    DO l = 1,3                                       !node i on the side
+      ni = kk(l,k)                                   !local node
+      idof = (ni-1)*ndofn                            !initial DOF
+      !                          ni   with   ni
+      !                  delta t(i)  with delta t(i)
+      ckgeo = - DOT_PRODUCT(dx,t(:,ni))*nf(l)*q(k)
+      DO i = 4,5
+        poses = poesti(idof+i,idof+i,nvarl)
+        stiff(poses) = stiff(poses) + ckgeo
+      END DO
+      !                  delta u(i)  with delta t(i)
+      ckgeo = nd(l)*nf(l)*q(k)
+      IF( MOD(k,2) == 0 ) ckgeo = -ckgeo
+      DO j=1,3 !ndime
+        poses = poesti(idof+j,idof+4,nvarl)
+        stiff(poses) = stiff(poses) - ckgeo*lb(j,2,ni)
+        poses = poses + 1
+        stiff(poses) = stiff(poses) + ckgeo*lb(j,1,ni)
+      END DO
+      !                ni  with  nj    ni <> nj
+      DO n = l+1,3              !HERE WITH HAVE PROBLEMS
+        nj = kk(n,k)
+        jdof = (nj-1)*ndofn
+        coef1 =  nd(l)*nf(n)*q(k)
+        coef2 =  nd(n)*nf(l)*q(k)
+
+        IF( ni < nj )THEN
+          DO j = 1,3 !ndime
+            ! over the submatrix diagonal delta u(i)  with delta t(j)
+            poses = poesti(idof+j,jdof+4,nvarl)
+            stiff(poses) = stiff(poses) - coef1*lb(j,2,nj)
+            poses = poses + 1
+            stiff(poses) = stiff(poses) + coef1*lb(j,1,nj)
+            ! under the submatrix diagonal    delta u(j)  with delta t(i)
+            poses = poesti(idof+4,jdof+j,nvarl)
+            stiff(poses) = stiff(poses) - coef2*lb(j,2,ni)
+            poses = poesti(idof+5,jdof+j,nvarl)
+            stiff(poses) = stiff(poses) + coef2*lb(j,1,ni)
+          END DO
+        ELSE
+          DO j = 1,3 !ndime
+            ! over the submatrix diagonal delta u(i)  with delta t(j)
+            poses = poesti(jdof+4,idof+j,nvarl)
+            stiff(poses) = stiff(poses) - coef1*lb(j,2,nj)
+            poses = poesti(jdof+5,idof+j,nvarl)
+            stiff(poses) = stiff(poses) + coef1*lb(j,1,nj)
+            ! under the submatrix diagonal    delta u(j)  with delta t(i)
+            poses = poesti(jdof+j,idof+4,nvarl)
+            stiff(poses) = stiff(poses) - coef2*lb(j,2,ni)
+            poses = poses + 1
+            stiff(poses) = stiff(poses) + coef2*lb(j,1,ni)
+          END DO
+        END IF
+      END DO                                        ! nj
+    END DO                                          ! ni
+
+ END DO                                                !k=1,ngamm
+
+ END SUBROUTINE kgshm7

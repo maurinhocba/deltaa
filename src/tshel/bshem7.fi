@@ -1,0 +1,31 @@
+ SUBROUTINE bshem7(nnass,dxt,ts,lb,bs)
+ !*****************************************************************************
+ !
+ !*****evaluates b matrix for shear at the assumed strain points
+ !
+ !****************************************************************************
+ IMPLICIT NONE
+ !              variables used from the module
+ ! ntan(nnode,nnass)
+ ! nsha(nnode,nnass)
+ !                        routine parameters
+ INTEGER(kind=4), INTENT(IN) :: nnass        ! number of shear strains
+ REAL (kind=8), INTENT(IN) :: dxt(:,:),    & ! mid-surface side derivatives at sampling points
+                              ts(:,:),     & ! director at sampling points
+                              lb(:,:,:)      ! local reduced lambda matrix
+ REAL (kind=8), INTENT(OUT) :: bs(:,:,:)     ! (ndime+2,nnode,nnass)
+
+ !                        local variables
+
+ INTEGER (kind=8) :: i,j
+
+ DO i=1,nnass
+   DO j=1,nnode
+     bs(1:3,j,i) = ntan(j,i)*ts(:,i)
+     bs(  4,j,i) = -DOT_PRODUCT(dxt(:,i),lb(:,2,j))*nsha(j,i)
+     bs(  5,j,i) =  DOT_PRODUCT(dxt(:,i),lb(:,1,j))*nsha(j,i)
+   END DO
+ END DO
+
+ RETURN
+ END SUBROUTINE bshem7

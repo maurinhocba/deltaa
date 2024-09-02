@@ -1,0 +1,126 @@
+ SUBROUTINE jacob29(deriv,cartd,dvol,x,ielem,istop,lb,jacin,ders,nfdas,ansmm,anssh,nassp,ipcdm)
+ !*********************************************************************
+ !
+ !**** this SUBROUTINE evaluates the jacobian matrix and the cartesian
+ !     shape FUNCTION derivatives
+ !
+ !*********************************************************************
+ IMPLICIT NONE
+ ! dummy arguments
+ REAL(kind=8), INTENT(IN) :: x(:,:),          & !(3,nnode) element coordinates
+                             lb(:,:),         & !(3,3) Local cartesyan system at element center
+                             deriv(:,:,:,:),  & !(nnode,ndime,ngaup,ngaud)Local natural derivatives at faces and mid-surface
+                             ders(:,:,:,:)      !(nnode,ndime,nassp,nface)Local natural derivatives at assumed strain points (shear)
+ REAL(kind=8), INTENT(OUT) :: dvol(:,:),      & !(ngaup,ngaud) gauss point jacobian at faces and center
+                              cartd(:,:,:),   & !(nnode,face,ngaup) standard cartesian derivative (y3) at mid-surface (mid side points)
+                              nfdas(:,:,:),   & !(nnode,nassp,nface) standard cartesian derivative (y3) at shear sampling points
+                              jacin(:,:,:,:)    !(2,2,2,ngaup) in-plane inverse jacobian at each face and each in-plane gauss point
+ INTEGER(kind=4) :: ielem,istop                 !in case of error
+ INTEGER(kind=4), INTENT(IN) :: ansmm,        & !membrane model
+                                anssh,        & !transverse shear model
+                                nassp
+ REAL(kind=8), INTENT(OUT), POINTER :: ipcdm(:,:,:,:)  !(nnode,2,nface,ngaud) in-plane cartesyan derivatives of faces nodes (ANSMM=0)
+ ! local variables
+ INTEGER (kind=4) i,face,g,ias,face1
+ REAL (kind=8) lt,j0,jaci(3,3),gcova(3,3)
+
+ DO face=1,nface+1  !for each surface (bottom, top, center)
+   DO g=1,ngaup        !for each in-plane GP
+
+     gcova = MATMUL(x,deriv(:,:,g,face))  ! covariant base
+
+     j0 =  gcova(1,1)*gcova(2,2)*gcova(3,3) +gcova(1,3)*gcova(2,1)*gcova(3,2)  &
+          +gcova(3,1)*gcova(1,2)*gcova(2,3) -gcova(3,1)*gcova(2,2)*gcova(1,3)  &
+          -gcova(3,3)*gcova(1,2)*gcova(2,1) -gcova(1,1)*gcova(2,3)*gcova(3,2)
+
+     IF( j0   <= 0d0 ) THEN       !check
+        WRITE(*,600,ERR=9999) ielem
+        WRITE(*,900,ERR=9999)
+        WRITE(*,910,ERR=9999) x
+        WRITE(lures,600,ERR=9999) ielem
+        WRITE(lures,900,ERR=9999)
+        WRITE(lures,910,ERR=9999) x
+        istop = 1
+        RETURN
+     END IF
+     dvol(face,g) = j0/6d0  !keep gauss point volume (all points has the same weight)
+     ! determine a cartesyan local system (y coord) based on center system (lb)
+     ! here gcova(:,3) must be set as direction 3
+     CALL vecpro(gcova(1,1),gcova(1,2),jaci(1,3)) !tl_3 = g_xita x g_eta
+     CALL vecuni(3,jaci(1,3),lt)                  !unit vector, normal to xita-eta plane
+     CALL vecpro(jaci(1,3),lb(1,1),jaci(1,2))     !tl_2 = tl_3 x lb_1
+     CALL vecuni(3,jaci(1,2),lt)                  !unit vector
+     CALL vecpro(jaci(1,2),jaci(1,3),jaci(1,1))   !tl_1 = tl_2 x tl_3
+     !compute components of gcova respect to the local system
+     gcova = MATMUL(TRANSPOSE(jaci),gcova)        !d_y/d_xita
+     ! and inverse of jacobian matrix
+     jaci(1,1) =  (gcova(2,2)*gcova(3,3)-gcova(2,3)*gcova(3,2))/j0
+     jaci(2,1) = -(gcova(2,1)*gcova(3,3)-gcova(3,1)*gcova(2,3))/j0
+     jaci(3,1) =  (gcova(2,1)*gcova(3,2)-gcova(2,2)*gcova(3,1))/j0
+     jaci(1,2) = -(gcova(1,2)*gcova(3,3)-gcova(1,3)*gcova(3,2))/j0
+     jaci(2,2) =  (gcova(1,1)*gcova(3,3)-gcova(3,1)*gcova(1,3))/j0
+     jaci(3,2) = -(gcova(1,1)*gcova(3,2)-gcova(1,2)*gcova(3,1))/j0
+     jaci(1,3) =  (gcova(1,2)*gcova(2,3)-gcova(1,3)*gcova(2,2))/j0
+     jaci(2,3) = -(gcova(1,1)*gcova(2,3)-gcova(1,3)*gcova(2,1))/j0
+     jaci(3,3) =  (gcova(1,1)*gcova(2,2)-gcova(2,1)*gcova(1,2))/j0
+
+     !  keep in plane inverse jacobian (J^-T) at external faces
+     IF( face < 3 ) THEN  !bottom and top surface, keep in-plane jacobian
+       IF( ansmm /= 0 .OR. anssh /= 0 ) jacin(:,:,face,g) = jaci(1:2,1:2)           !dxi/dx1
+       IF( ansmm == 0 .OR. anssh == 0 )THEN !standard displacement formulation for in-plane or shear strains
+         DO i=1,nnode
+           ipcdm(i,1,face,g) = DOT_PRODUCT(deriv(i,:,g,face),jaci(:,1))
+           ipcdm(i,2,face,g) = DOT_PRODUCT(deriv(i,:,g,face),jaci(:,2))
+         END DO
+       END IF
+       DO i=1,nnode
+         cartd(i,face,g) = DOT_PRODUCT(deriv(i,:,g,face),jaci(:,3))
+       END DO
+     END IF
+
+   END DO
+ END DO
+
+ ! compute cartesyan (y3) derivatives of the shape functions
+ ! necessary to compute f_3 for transverse shear strain
+ IF( anssh > 0 )THEN
+   DO face=1,nface  !for each surface
+     DO ias=1,nassp
+
+       gcova = MATMUL(x,ders(:,:,ias,face))  ! covariant base
+
+       j0 =  gcova(1,1)*gcova(2,2)*gcova(3,3) +gcova(1,3)*gcova(2,1)*gcova(3,2)  &
+            +gcova(3,1)*gcova(1,2)*gcova(2,3) -gcova(3,1)*gcova(2,2)*gcova(1,3)  &
+            -gcova(3,3)*gcova(1,2)*gcova(2,1) -gcova(1,1)*gcova(2,3)*gcova(3,2)
+
+       ! determine a cartesyan local system (y coord) based on center system (lb)
+       ! here gcova(:,3) must be set as direction 3
+       CALL vecpro(gcova(1,1),gcova(1,2),jaci(1,3)) !tl_3 = g_xita x g_eta
+       CALL vecuni(3,jaci(1,3),lt)                  !unit vector, normal to xita-eta plane
+       CALL vecpro(jaci(1,3),lb(1,1),jaci(1,2))     !tl_2 = tl_3 x lb_1
+       CALL vecuni(3,jaci(1,2),lt)                  !unit vector
+       CALL vecpro(jaci(1,2),jaci(1,3),jaci(1,1))   !tl_1 = tl_2 x tl_3
+       !compute components of gcova respect to the local system
+       gcova = MATMUL(TRANSPOSE(jaci),gcova)        !d_y/d_xita
+       ! and inverse of jacobian matrix
+       jaci(1,3) =  (gcova(1,2)*gcova(2,3)-gcova(1,3)*gcova(2,2))/j0
+       jaci(2,3) = -(gcova(1,1)*gcova(2,3)-gcova(1,3)*gcova(2,1))/j0
+       jaci(3,3) =  (gcova(1,1)*gcova(2,2)-gcova(2,1)*gcova(1,2))/j0
+
+       ! compute cartesyan (y3) derivatives of the shape functions
+       ! necessary to compute f_3 for transverse axial strain
+       DO i=1,nnode
+         nfdas(i,ias,face) = DOT_PRODUCT(ders(i,:,ias,face),jaci(:,3))
+       END DO
+
+     END DO
+   END DO
+ END IF
+
+ RETURN
+  600 FORMAT(//,' PROGRAM halted in SUBROUTINE jacob29',/,11x,           &
+     &' zero or negative volume',/,10x,' element number ',i5)
+  900 FORMAT(//,5x,'coordinates of element nodes')
+  910 FORMAT(5x,3e15.8)
+ 9999 CALL runen2('')
+ END SUBROUTINE jacob29

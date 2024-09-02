@@ -1,0 +1,29 @@
+ SUBROUTINE kgmm14 (a,b,s,stiff,nvarl)
+ ! compute Geometric stiffness matrix (membrane part only)
+ IMPLICIT NONE
+ REAL (kind=8), INTENT(IN) ::  a(3), b(3), s(3)
+ REAL (kind=8), INTENT(OUT) :: stiff(*)
+ INTEGER (kind=4), INTENT(IN) :: nvarl
+
+ INTEGER (kind=4) i,j,k,l,n,pos
+ REAL (kind=8) value
+ INTEGER (kind=4) poesti
+ poesti(i,j,n) = (2*n-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+ l = 0
+ DO i=1,3
+   n = l
+   DO j=i,3
+     value = + s(1)*b(i)*b(j) + s(2)*a(i)*a(j) - s(3)*(a(i)*b(j)+a(j)*b(i))
+     DO k=1,3
+       pos = poesti(l+k,n+k,nvarl)
+       stiff(pos) = stiff(pos) + value
+     END DO
+     n = n + 3
+   END DO
+   l = l + 3
+ END DO
+
+ RETURN
+ END SUBROUTINE kgmm14
+ !----------------------------------------------------------------------

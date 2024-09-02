@@ -1,0 +1,145 @@
+ SUBROUTINE zigzag_pro1(ntype,nstre,secno,st,dst,iel,dis,pr,diff,auxil)
+ ! computes displacements and stress profiles for beams + RZT3
+ IMPLICIT NONE
+ !dummy arguments
+ REAL(kind=8), INTENT(IN) :: st(:),     & !strains(1:nstre*ngaus,:)
+                             dst(:),    & !strains derivative
+                             dis(:),    & !axial disp
+                             auxil(:)
+ INTEGER(kind=4), INTENT(IN) :: nstre,  & !number of stresses, presently only for beams
+                                ntype,  & !problem type, presently only for beams (ntype=1)
+                                secno,  & !section position in array
+                                iel,    & !element label for output
+                                pr        !print options 1:stresses, 2:displacements 3:both
+ LOGICAL, INTENT(IN) :: diff
+ !local variables
+ INTEGER(kind=4) :: n    !number of points at each layer
+ TYPE(section), POINTER :: sec
+ TYPE (mater), POINTER :: mat
+ INTEGER(kind=4) :: i,nl,j,ip,ii,ns,nm,ll,k,l,k0,stype
+ REAL(kind=8) :: e(2),de(2),z,celoc(6),ce(4),t,tt(2),strp(nstre),dstrp(nstre),x0,w0,thick,phiz,betaz,dz,thickl,qi,m,qc,nc,ff !,rr
+ REAL(kind=8), ALLOCATABLE :: sx(:,:),tx(:,:),beta(:),phi(:),rprop(:,:),zc(:),dsx(:),disp(:,:)  !,ahf(:)
+ REAL(kind=8)  :: width
+ LOGICAL :: prs, prd
+
+ WRITE(58,"(11e14.5)")st(:),dst(:),dis(:)
+ sec => psecs(secno)%p    !point to associated section
+ stype = sec%secty       !44 / 45
+ width = sec%rprop(4)     !beam width
+ prs = pr /= 2            !compute stress profiles
+ prd = pr >= 2            !compute displacement profiles
+
+ nl = sec%iprop(1)         !number of layers
+ n = 12 !MAX(2,99/nl)          !number of points at each layer
+ thick = sec%rprop(1)      !total thickness
+ ALLOCATE( beta(nl),    &  !phi derivative at each mid-layer
+           phi(0:nl),   &  !phi at each layer interface
+           rprop(2,nl), &  !thick , zk-b of each layer
+           zc(1:nl*n))     !z coordinates
+ ALLOCATE( sx(1:nl*n,2),  &  !axial stress and integrated shear stress
+           dsx(nl*n),     &  !axial stress derivatives before and after each layer interface
+           tx(nl*n,2))       !shear stress
+!                     ahf(0:nl))        !ad-hoc functions for shear at each material
+ ALLOCATE( disp(0:nl*n,2))   !axial displacements
+
+ IF( stype == 45 )THEN
+   x0 = -sec%rprop(31)
+   w0 = -sec%rprop(32)
+   CALL vecasi (nl+1,sec%rprop(33),phi)    ! phi
+   j = 34+nl
+   CALL vecasi (nl,sec%rprop(j),beta)      ! beta
+   !ll=0
+   !ff = 1d0
+   IF( diff )THEN
+     x0    = (-auxil(17)+x0)/2d0
+     w0    = (-auxil(18)+w0)/2d0
+     phi(:)= (phi(:)+auxil(19:19+nl))/2d0
+     beta(:)=(beta(:)+auxil(20+nl:))/2d0
+   END IF
+   j = 34+nl*2
+   ii=6                                    ! point to first material
+ ELSE
+   x0 = 0d0 ; w0 = 0d0
+   CALL vecasi (nl+1,sec%rprop(27),phi)    ! phi
+   j = 28+nl
+   CALL vecasi (nl,sec%rprop(j),beta)      ! beta
+   IF( diff )THEN
+     phi(:)= (phi(:)+auxil(19:19+nl))/2d0
+     beta(:)=(beta(:)+auxil(20+nl:))/2d0
+   END IF
+   j = 28+nl*2
+   ii=5                                    ! point to first material
+ END IF
+ CALL vecasi (nl*2,sec%rprop(j),rprop)   ! layer thickness and Z postion ad mid-layer
+
+ !j = j+nl*2
+ !CALL vecasi (nl+1,sec%rprop(j),ahf)          ! ad-hoc functions for shear
+
+ IF( ntype == 1 )THEN                       ! plane stress
+    ns = 3
+    nm = 2
+ ELSE                                       ! plane strain or axilsymmetric
+    nm = 3
+    ns = 5
+ END IF
+ strp = st(1:nstre)                         ! strains
+ dstrp = dst(:)                             ! strains
+ sx = 0d0                                   ! initializes stresses
+ t = 0d0                                    !initializes shear stress at bottom face
+ qi= 0d0 ; m = 0d0 ; nc = 0d0; qc = 0d0    !initialiazes shear and moment
+
+ k = 0                                      !initializes counter
+ DO i=1,nl                                  ! for each layer
+   thickl = rprop(1,i)                          !layer thickness
+   dz = thickl/(n-1)                            !sublayer increment
+   z = rprop(2,i)-thickl/2d0                    !bottom surface of each layer
+   ip = sec%iprop(ii)                           ! associated material
+   mat => pmats(ip)%p                           !point to material
+   IF( ntype == 1 )THEN                         ! plane stress
+      CALL elastiff(celoc,mat,6)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+   ELSE                                         ! plane strain or axilsymmetric
+      CALL elastiff(celoc,mat,4)                  !get elastic stiffnes matrix 4=plain stress + transverse shear
+   END IF
+   ce(1:4) = celoc((/1,2,3,5/))               ! C11 C12      G13   of first layer
+   !IF( i == ll )ce = ce*ff
+   ii = ii + 1
+   k0 = k+1
+   DO l=1,n                 !for each point at the layer
+     k = k + 1                !update pointer
+     zc(k) = z                !keep z coordinate  for output
+     phiz = phi(i-1) + beta(i)*(z-zc(k0)) + x0*z**2 + w0*z**3  !Phi function
+     betaz= beta(i) + 2*x0*z + 3*w0*z**2         ! phi_z
+     tx(k,1) = (betaz+1d0)*strp(nstre)*ce(4)     ! tau-b  (continuous part)
+     tx(k,2) = (strp(ns)-strp(nstre))*ce(4)      ! tau-c  (discontinuous part)
+     e(1) = strp(1) + strp(nm)*z + strp(ns+1)*phiz                     !E11
+     e(2) = 0d0
+     IF( ntype == 3 ) e(2) = strp(2) + strp(4)*z + strp(6)*phiz        !E22
+     de(1) = dstrp(1) + dstrp(2)*z + dstrp(4)*phiz                     !dE11
+     de(2) = 0d0
+     !!IF( ntype == 3 ) de(2) = + strp(3)*z + strp(3)*phiz        !E22
+     sx(k,1) = DOT_PRODUCT(e,ce(1:2))          !axial stress
+     dsx(k)  = DOT_PRODUCT(de,ce(1:2))         !axial stress derivative
+     !  PERFORM shear stress integration
+     IF( l > 1 )THEN
+       t = t - (dsx(k-1)+dsx(k))/2d0*dz            !integrated shear stress
+       m = m + dz*(sx(k,1)+sx(k-1,1))/2d0*(z-dz/2) !moment
+       nc= nc+ dz*(sx(k,1)+sx(k-1,1))/2d0          !axial force
+       qi= qi+ dz*(   t   +sx(k-1,2))/2d0          !integrated shear force
+       qc= qc+ dz*(tx(k,2)+tx(k,1)+tx(k-1,2)+tx(k-1,1))/2d0    !constitutive shear force
+     END IF
+     sx(k,2) = t           !keep shear stress
+     disp(k,1) = dis(1)+dis(2)*z
+     disp(k,2) = strp(nstre)*phiz+disp(k,1)
+     z = z+dz
+   END DO
+ END DO
+ !  PRINTS Axial and integrated shear stresses, computed stresses and displacements
+ WRITE(59,"(' VARIABLES = ""Z"", ""S_x"",""t_i"",""t_c"",""u_x""')")
+ WRITE(59,"('ZONE T= ""',i3,'-i""  I= ',i3,' F=POINT')")iel,nl*n
+ WRITE(59,"('# N =',E15.4,' M=',e15.4,' Qc=',e15.4,' Qi=',e15.4)")nc*width, m*width,qc*width,qi*width
+ DO k=1,nl*n                                  !for each interface and top surface
+   WRITE(59,"(2x,f10.4,4e15.5)")zc(k)*1000,sx(k,:)/1e6,(tx(k,1)+tx(k,2))/1e6,disp(k,2)*1000             !print values
+ END DO
+
+ RETURN
+ END SUBROUTINE zigzag_pro1

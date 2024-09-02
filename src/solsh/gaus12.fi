@@ -1,0 +1,136 @@
+ SUBROUTINE gaus12(heade,coord,istop,angdf,locax,nnb,nnode,quad,zigzag,check)
+ !-------------------------------------------------------------------
+ !--- evaluates gauss points constants for solid element 12 PRISM
+ !--------------------------------------------------------------------
+ USE npo_db, ONLY : eule0
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(OUT) :: istop
+ INTEGER (kind=4), INTENT(IN) :: locax, &
+                                 nnode, &
+                                 nnb
+ LOGICAL, INTENT(IN) :: quad,zigzag
+ LOGICAL, INTENT(IN) :: check
+ REAL (kind=8), INTENT(IN) :: coord(:,:), & !initial coordinates
+                              angdf         !default angle local axes - Ort_Axes
+ TYPE (ele12), POINTER :: heade       !pointer to first element in the set
+
+ ! local variables
+ TYPE(section), POINTER :: sec        !pointer to a section
+ LOGICAL found
+ INTEGER (kind=4) i,ielem,isec,osec
+ REAL (kind=8) :: shape(nnb,3),deriv(nnb,3,3)
+ REAL (kind=8) :: ang,factor,thick,maxr
+ REAL (kind=8) :: x(3,nnode),rm(9),lb(3,3),t1(3),cb
+ !               SPRISM
+ REAL (kind=8), PARAMETER :: a=0.333333333333333d0, &         !1/3
+                             b=0.666666666666667d0, &         !2/3
+                             c=0.166666666666667d0, &         !1/6
+                             tc(2,3) = (/ c,c, b,c, c,b /)    !in-plane gauss points (xita-eta)
+ TYPE (ele12), POINTER :: e           !pointer to an element
+ LOGICAL :: sides(3)                  !side element existence for quad approach
+
+ INTERFACE
+   INCLUDE 'inrotm.h'
+   INCLUDE 'check_orientation8.h'
+ END INTERFACE
+
+
+ !     ---------------------------------------------------------
+ IF( nnb == 6 )THEN
+   CALL shape4(nnb,shape(1,1),deriv(1,1,1),a,a,-1d0)   ! bottom face
+   CALL shape4(nnb,shape(1,2),deriv(1,1,2),a,a, 0d0)   ! element center
+   CALL shape4(nnb,shape(1,3),deriv(1,1,3),a,a,+1d0)   ! top face
+ ELSE
+   !nothing ? an array is missing for RZT
+ END IF
+
+ !     ---------------------------------------------------------
+
+ factor = ASIN(1d0)/90d0         !pi/180
+ maxr = 1d0
+ osec = -1  !initializes
+ e => heade       !point to first element
+ DO               !loop over the elements in the set
+   IF (.NOT.ASSOCIATED (e) ) EXIT  !if all element processed, exit
+
+   x(:,1:nnb) = coord(:,e%lnods(1:nnb))     !get original coordinates (element nodes)
+
+   IF( quad ) THEN
+     DO i=1,3        !get original coordinates (extra patch nodes)
+       sides(i) = ( e%lnods(i+6) /= 0 )         !side element exist
+       IF( sides(i) )THEN
+         x(:,i+6:i+9:3) = coord(:,e%lnods(i+6:i+9:3))
+       ELSE
+         x(:,i+6:i+9:3) = 0d0                   !may be unnecessary
+       END IF
+     END DO
+   END IF
+   IF(nnb == 8 .AND. check ) THEN
+     SELECT CASE (locax)
+     CASE(1)
+       t1 = (/ 1d0, 0d0, 0d0 /)
+     CASE(2)
+       t1 = (/ 0d0, 1d0, 0d0 /)
+     CASE(3)
+       t1 = (/ 0d0, 0d0, 1d0 /)
+     END SELECT
+     CALL check_orientation8(e%lnods,x,t1)
+   END IF
+   ang = (e%angle+angdf)*factor      ! in radians
+   ielem = e%numel
+   CALL lcsy12(lb,x,locax,ang,nnb)   !compute local shell system
+   ! compute element local systems, nodal functions and derivatives
+   IF( nnb == 6)THEN
+     CALL jacob12p(deriv,e%cartd,e%dvol,x,ielem,istop, &
+                  e%cdq,lb,sides,e%nfdas,e%jacin,quad)
+   ELSE
+     CALL jacob12s(e%cartd,e%dvol,x,ielem,istop, &
+                  e%cdq,e%nfdas,lb,e%jacin,e%area,e%asazz)
+
+   END IF
+   IF( zigzag)THEN
+     t1 =  COS(ang)*lb(1:3,1) + SIN(ang)*lb(1:3,2) !t_x
+     DO i=1,nnb/2
+       CALL inrotm(eule0(:,e%lnods(i)),rm(:))      !local system at node
+       cb = DOT_PRODUCT(rm(7:9),lb(:,3))           !COS beta
+       e%nangl(1,i) = DOT_PRODUCT(rm(1:3),t1)/cb   !COS alpha
+       e%nangl(2,i) = DOT_PRODUCT(rm(4:6),t1)/cb   !SIN alpha
+     END DO
+   END IF
+   !check thickness
+   isec = e%matno
+   IF( osec /= isec )THEN
+     sec => psecs(isec)%p
+     thick = sec%rprop(1) !thickness
+     osec = isec
+   END IF
+   t1 = 0d0
+   DO i=1,nnb/2
+     t1 = t1 + x(:,i+nnb/2)-x(:,i)
+   END DO
+   t1 = t1*2d0/nnb
+   cb = SQRT(DOT_PRODUCT(t1,t1))
+   IF( ABS(cb/thick -1d0) > 1e-2 ) THEN
+     WRITE(55,"('Warning: Difference between Data thickness ',e15.6, &
+                           &   ' and Computed thickness ',e15.6,' at element:',i6)")thick,cb,ielem
+     WRITE(3,"('Warning: Difference between Data thickness ',e15.6, &
+                           &   ' and Computed thickness ',e15.6,' at element:',i6)")thick,cb,ielem
+     IF( cb/thick > maxr )THEN
+        maxr = cb/thick
+     ELSE  IF( thick/thick > maxr )THEN
+        maxr = thick/cb
+     END IF
+
+   END IF
+   !end check
+   e%stint = 0d0        !Initializes stresses
+
+   e => e%next          !point to next element
+ END DO
+ IF( ABS(maxr -1d0) > 1e-2 ) &
+   &  WRITE(*,"('Warning: Difference between Data thickness and Computed thickness ',/  &
+   &          '         Maximum  ratio detected  ', f10.4)")maxr
+
+ RETURN
+ END SUBROUTINE gaus12

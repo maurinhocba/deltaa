@@ -1,0 +1,123 @@
+ SUBROUTINE resvp1(ndime,ndofn,nelem,coora,euler,resid,heade,ttime)
+ !********************************************************************
+ !
+ !***   evaluation of integral (b)**t*(sigma) for truss elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ INTEGER (kind=4) ndime,ndofn,nelem !,ifpre(:,:)
+ REAL (kind=8) coora(:,:),euler(:,:),resid(:,:),ttime !,veloc(:)
+ TYPE(ele01), POINTER :: heade
+
+ INTEGER (kind=4) ielem,isec,nl,osec,n1,n2,tc,rc,tcv,rcv,i,j,dir
+ REAL (kind=8) x(ndime,2),bts(6),lx,dx(ndime),facto,lb(9,3),al(3), &
+               v(6,3),stc,src,stcv,srcv,vx !,vr
+ TYPE(ele01), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL :: newm,same
+
+
+ !***  loop over all the elements
+ osec = -1             !initializes
+ nl = 3+ndime          !pointer to rotation values
+ e => heade            !pointer to first element
+ DO ielem = 1,nelem        !for each element
+   isec  = e%matno         !associated section
+   newm = isec /= osec     !compare with previous section
+   IF ( newm )THEN            !if a different section
+     sec => psecs(isec)%p                  !search and point
+     osec = isec                           !keep section number
+     tc  = sec%iprop(1)                    !curve for translational stiffnes
+     rc  = sec%iprop(2)                    !curve for rotational stiffness
+     !tcv = sec%iprop(3)                    !curve for translational damping
+     !rcv = sec%iprop(4)                    !curve for rotational damping
+     stc  = sec%rprop(1)                   !translational stiffnes
+     src  = sec%rprop(2)                   !rotational stiffness
+     !stcv = sec%rprop(3)                   !translational damping
+     !srcv = sec%rprop(4)                   !rotational damping
+     dir = sec%secdef(3)
+   END IF
+   !       gathers the actual coordinates
+   n1 = e%lnods(1)                 !first node
+   n2 = e%lnods(2)                 !second node
+   same = (n2 == 0)                !one node only
+   ! Coordinates and velocities
+   x(:,1) = coora(:,n1)            !coordinates of first node
+   !v = 0d0                         !initializes velocities
+   !DO i=1,ndofn                    !for each DOF
+   !  j = ifpre(i,n1)                   !associated equation
+   !  IF( j > 0 ) v(i,1) = veloc(j)     !non-prescribed velocity
+   !END DO
+   IF( same ) THEN                 !if 1 node olny
+     x(:,2) = e%gausv(2:ndime+1)    !recover original coordinates
+   ELSE
+     x(:,2) = coora(:,n2)           !coordinates of the second node
+     !DO i=1,ndofn                   !for each DOF
+     !  j = ifpre(i,n2)                  !associated equation
+     !  IF( j > 0 ) v(i,2) = veloc(j)    !non-prescribed velocity
+     !END DO
+   END IF
+   dx = x(:,2) - x(:,1)             !distance vector
+   SELECT CASE (dir)
+   CASE( 1 )                  !X only
+     dx(2:3) = 0d0
+   CASE( 2 )                  !Y only
+     dx(1:3:2) = 0d0
+   CASE( 3 )                  !Z only
+     dx(1:2) = 0d0
+   CASE( 4 )                  !X-Y plane only
+     dx(3) = 0d0
+   CASE( 5 )                  !X-Z plane only
+     dx(2) = 0d0
+   CASE( 6 )                  !Y-Z plane only
+     dx(1) = 0d0
+   END SELECT
+   lx = SQRT(DOT_PRODUCT(dx,dx))    !distance
+   IF( lx > 0 )dx = dx/lx           !unit vector t (direction)
+   !v(:,3) = v(:,2) - v(:,1)         !velocity difference
+   !vx = DOT_PRODUCT(v(1:ndime,3),dx)  !proyection of velocity over direction t
+   facto = stc*lx !+ stcv*vx         !KT*e + CT*e' = force modulus
+   bts(1:ndime) =  facto*dx         !force vector
+   e%gausv(1) = facto               !keep present force modulus
+   ! local system
+   IF( e%rot )THEN                  !rotational stiffness or damping
+     IF( ndime == 2 )THEN             !2-D
+       al(1) = euler(1,n1)              !actual angle of 1st node
+       IF( same ) THEN
+         al(2) = e%gausv(nl)            !recover original angle
+       ELSE
+         al(2) = euler(1,n2)            !actual angle of second node
+       END IF
+       al(3) = al(2) - al(1)           !rotation
+       facto = src*al(3) !+ srcv*v(3,3) !moment modulus
+       bts(3) =  facto
+     ELSE                             !3-D
+       lb(:,1) = euler(:,n1)            !actual local system at first node
+       IF( same ) THEN
+         lb(:,2) = e%gausv(nl:nl+8)     !recover original system
+       ELSE
+         lb(:,2) = euler(:,n2)          !actual local system at second node
+       END IF
+       CALL proma4(lb(1,3),lb(1,1),lb(1,2),3,3,3) ! l3 = l1^T * l2
+       CALL cuate8(lb(1,3),al(1))                 ! al = rotation vector
+       lx = SQRT(DOT_PRODUCT(al,al))              ! rotation angle
+       al = src*al !+ srcv*v(4:6,3)                ! moment vector
+       facto = SQRT(DOT_PRODUCT(al,al))           ! moment modulus
+       bts(4:6) =  al(1:3)                        !
+     END IF
+     IF( same )THEN
+       e%gausv(2+ndime) = facto                   !keep moment modulus
+     ELSE
+       e%gausv(2) = facto                         !keep moment modulus
+     END IF
+   ELSE
+     bts(ndime+1:ndofn) = 0d0                     !no contribution
+   END IF
+
+   resid(1:ndofn,n1) = resid(1:ndofn,n1) - bts(1:ndofn)   !sum to first node
+   IF( .NOT.same ) &
+     resid(1:ndofn,n2) = resid(1:ndofn,n2) + bts(1:ndofn) !sum to second node
+   e => e%next   !point to next element
+ END DO
+ RETURN
+ END SUBROUTINE resvp1

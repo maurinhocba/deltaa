@@ -1,0 +1,90 @@
+ SUBROUTINE dmatx7(c,prop,stres,defps,efpst,d,newmt,de,di,yp,al)
+
+ IMPLICIT NONE
+
+ REAL (kind=8), INTENT(IN) :: c(5),prop(17),stres(5),defps,efpst
+ REAL (kind=8), INTENT(OUT) :: d(5,5)
+ LOGICAL, INTENT(IN OUT) :: newmt
+ REAL (kind=8), INTENT(IN OUT) :: de(5,5),di(5),yp(4),al(6)
+ ! local variables
+ REAL (kind=8) :: a(5),s(5),syield,g2,beta,th11,th12,th22,th33,th44,  &
+                  ti11,ti12,ti22,ti33,ti44,aux,dlamb,aprim
+
+
+ !First TASK : Set Constants for a new material
+
+ IF(newmt)THEN
+   de = 0d0
+   de(1,1) = c(1)
+   de(1,2) = c(2)
+   de(2,2) = c(3)
+   de(3,3) = c(4)
+   de(4,4) = c(5)
+   de(5,5) = c(5)
+   aux = 1d0/(c(1)*c(3) - c(2)*c(2))
+   di(1) = c(3)*aux   !(1,1)
+   di(2) =-c(2)*aux   !(1,2)
+   di(3) = c(1)*aux   !(2,2)
+   di(4) = 1d0/c(4)   !(3,3)
+   di(5) = 1d0/c(5)   !(4,4)
+   yp(1) = prop(1) ! c0
+   yp(2) = prop(2) ! aprim or e0
+   yp(3) = prop(3) ! expn
+   yp(4) = prop(4) ! rfs
+   al(1:6) = prop(12:17)
+   RETURN
+ END IF
+
+ ! Second TASK : compute tangent constitutive matrix
+
+ IF( defps == 0d0)THEN
+   d = de
+ ELSE
+   ! equivalent stress
+   IF( yp(3) == 0d0)THEN
+     syield = yp(1) + yp(2)*efpst     !linear hardening
+     aprim = yp(2)
+   ELSE IF( yp(4)  == 0d0 )THEN
+     syield = yp(1)*(yp(2)+efpst)**yp(3)             !non-linear (exponential) hardening
+     aprim = yp(3)*yp(1)/(yp(2)+efpst)**(1d0-yp(3))  !derivative
+   ELSE
+     syield = yp(1)+yp(2)*efpst+(yp(4)-yp(1))*(1d0-1d0/EXP(yp(3)*efpst)) !linear + saturation law hardening
+     aprim = yp(2) + (yp(4)-yp(1))*yp(3)/EXP(yp(3)*efpst)                !derivative
+   END IF
+   ! Derivative or yield function
+   s(1) = (al(1)*stres(1) + al(2)*stres(2))/syield
+   s(2) = (al(2)*stres(1) + al(3)*stres(2))/syield
+   s(3) = al(4)*stres(3)/syield
+   s(4) = al(5)*stres(4)/syield
+   s(5) = al(6)*stres(5)/syield
+   dlamb = defps/syield
+   g2 = 1d0 - aprim*dlamb/1.5d0                 !gamma2
+   beta = 4d0/9d0*aprim/g2                      !beta/syield^2
+   ti11 = di(1)+ dlamb/1.5d0                    !theta^(-1)
+   ti12 = di(2)- dlamb/3.0d0
+   ti22 = di(3)+ dlamb/1.5d0
+   ti33 = di(4)+ dlamb*2d0
+   ti44 = di(5)+ dlamb*2d0
+   aux = ti11*ti22 - ti12*ti12                  !theta
+   th11 = ti22/aux
+   th12 =-ti12/aux
+   th22 = ti22/aux
+   th33 = ti33/aux
+   th44 = ti44/aux
+   a(1) = th11*s(1) + th12*s(2)                 !theta*s
+   a(2) = th22*s(2) + th12*s(1)
+   a(3) = th33*s(3)
+   a(4) = th44*s(4)
+   a(5) = th44*s(5)
+   aux = a(1)*s(1)+a(2)*s(2)+a(3)*s(3)+a(4)*s(4)+a(5)*s(5) + beta   !s*theta*s + b
+   d(1,1) = th11 - a(1)*a(1)/aux
+   d(1,2) = th12 - a(1)*a(2)/aux
+   d(1,3) =      - a(1)*a(3)/aux
+   d(2,2) = th22 - a(2)*a(2)/aux
+   d(2,3) =      - a(2)*a(3)/aux
+   d(3,3) = th33 - a(3)*a(3)/aux
+   d(4,4) = th44 - a(4)*a(4)/aux
+   d(5,5) = th44 - a(5)*a(5)/aux
+ END IF
+ RETURN
+ END SUBROUTINE dmatx7

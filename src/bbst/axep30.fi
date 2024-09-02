@@ -1,0 +1,219 @@
+ SUBROUTINE axep30(numel,x,a,b,area2,angle,locax,bcode,nab,bounc,sfd,cdn)
+ !***********************************************************************
+ !
+ !    this routine compute the element local axes system
+ !    for the 3 node element, and for the adjacent elements
+ !    (local x-axis is directed along fiber at an Angle with
+ !    standard direction (intersection with X-Y plane)
+ !***********************************************************************
+ IMPLICIT NONE
+ ! dummy arguments
+ REAL (kind=8),INTENT(IN) ::  angle,       & !angle between standard X1 and local X1
+                              sfd(6,2,3)     !Shape Function local Derivatives at mid side point
+ REAL (kind=8),INTENT(IN OUT) :: x(3,12), &  !nodal coordinates
+                                 cdn(6,3)    !shape Function normal derivatives at MSP
+ REAL (kind=8), POINTER :: nab(:,:)          !normal direction at symmetry/clamped boundaries
+ REAL (kind=8),INTENT(OUT) :: a(3),b(3), &   !shape function cartesyan derivatives of linear triangle
+                              area2          !element areas (twice then just once)
+ INTEGER(kind=4), INTENT(IN) :: locax,   &   !cartesyan sistem preference
+                                bcode,   &   !boundary case of the element
+                                numel        !associated label
+ LOGICAL, INTENT(IN) :: bounc(6)       ! boundary conditions
+
+ ! local variables
+ INTEGER (kind=4) i,n
+ REAL (kind=8) l(3,3),t(3,3),lt,cosa,sina,z(3),jin(2,2),xc(3,6),x3(12)
+ LOGICAL :: dump  ! to write data for debug
+
+ INTERFACE
+   INCLUDE 'vecpro.h'
+   INCLUDE 'vecuni.h'
+ END INTERFACE
+
+ dump = .FALSE. !numel == 12
+ !*** evaluate the side vectors
+ !
+ l(:,1) = x(:,3) - x(:,2)                             !side 1
+ l(:,2) = x(:,1) - x(:,3)                             !side 2
+ l(:,3) = x(:,2) - x(:,1)                             !side 3
+
+ CALL vecpro(l(:,1),l(:,2),t(:,3))   !=> plane normal
+ CALL vecuni(3,t(:,3),area2)         !computes twice area
+
+ IF (area2 == 0.0D0)THEN
+   WRITE (55,*,ERR=9999) 'ERROR: AREA2 == 0 '
+   WRITE(55,"(3e15.5)",ERR=9999) x(:,1:3)
+   CALL runen3('AXEP30: WRONG ELEMENT DEFINITION   ')
+ END IF
+
+ SELECT CASE (locax)
+ CASE (1)
+   lt = (t(2,3)*t(2,3)+t(3,3)*t(3,3)) !component in th Y-Z plane
+   IF( lt  < 1.0d-5) THEN         !If t3 is almost orthogonal to  Y-Z plane
+     t(:,2) = (/ -t(3,3), 0d0, t(2,3) /) !choose t2 orthogonal to global Y direction
+     CALL vecuni(3,t(:,2),lt)
+     CALL vecpro(t(:,2),t(:,3),t(:,1))
+   ELSE       !         SELECT local y=t(:,1) in the global YZ plane
+     t(:,1) = (/ 0d0, -t(3,3), t(2,3)  /)
+     t(:,2) = (/ lt, -t(2,3)*t(2,3), -t(3,3)*t(2,3) /)
+     CALL vecuni(3,t(:,1),lt)   !     normalizes t(:,1) & t(:,2)
+     CALL vecuni(3,t(:,2),lt)
+   END IF
+ CASE (2)
+   lt = (t(3,3)*t(3,3)+t(2,3)*t(2,3)) !component in th Z-X plane
+   IF( lt  < 1.0d-5) THEN         !If t3 is almost orthogonal to  Z-Y plane
+     t(:,2) = (/ t(2,3), -t(2,3), 0d0 /) !choose t2 orthogonal to global Z direction
+     CALL vecuni(3,t(:,2),lt)
+     CALL vecpro(t(:,2),t(:,3),t(:,1))
+   ELSE       !         SELECT local z=t(:,1) in the global ZX plane
+     t(:,1) = (/ t(3,3), 0d0, -t(2,3)  /)
+     t(:,2) = (/  -t(2,3)*t(2,3), lt, -t(3,3)*t(2,3) /)
+     CALL vecuni(3,t(:,1),lt)   !     normalizes t(:,1) & t(:,2)
+     CALL vecuni(3,t(:,2),lt)
+   END IF
+ CASE (3)
+   lt = (t(2,3)*t(2,3)+t(2,3)*t(2,3)) !component in th X-Y plane
+   IF( lt  < 1.0d-5) THEN         !If t3 is almost orthogonal to  X-Y plane
+     t(:,2) = (/ 0d0, t(3,3), -t(2,3) /) !choose t2 orthogonal to global X direction
+     CALL vecuni(3,t(:,2),lt)
+     CALL vecpro(t(:,2),t(:,3),t(:,1))
+   ELSE       !         SELECT local x=t(:,1) in the global xy plane
+     t(:,1) = (/ -t(2,3), t(2,3) , 0d0 /)
+     t(:,2) = (/ -t(2,3)*t(3,3), -t(2,3)*t(3,3), lt /)
+     CALL vecuni(3,t(:,1),lt)   !     normalizes t(:,1) & t(:,2)
+     CALL vecuni(3,t(:,2),lt)
+   END IF
+ END SELECT
+
+ cosa = COS(angle)                            !angle to compute
+ sina = SIN(angle)                            !local X1 direction
+
+ z  = t(:,1)                                    !auxiliar
+ t(:,1) =  z*cosa + t(:,2)*sina                 !local X1 direction
+ t(:,2) = -z*sina + t(:,2)*cosa                 !local X2 direction
+
+ !*** find the sides local proyections
+
+ a(1) = DOT_PRODUCT(l(:,1),t(:,1)) ! l1 . t1
+ a(2) = DOT_PRODUCT(l(:,2),t(:,1)) ! l2 . t1
+ a(3) = -a(1)-a(2)
+ b(1) = DOT_PRODUCT(l(:,1),t(:,2)) ! l1 . t2
+ b(2) = DOT_PRODUCT(l(:,2),t(:,2)) ! l2 . t2
+ b(3) = -b(1)-b(2)
+
+ ! compute ficticious nodes at boundary and mid-side nodes
+ SELECT CASE (bcode)
+ CASE (0)
+   !nothing
+ CASE (1)              !one node on a side
+   x(:,10) = x(:,1) + x(:,5) - x(:,3)
+   x(:,11) = x(:,1) + x(:,6) - x(:,2)
+   IF( bounc(1) ) THEN !if clamped or symmetry line at node 1
+     ALLOCATE(nab(3,2))
+     CALL normal30(x,1,5,3,nab(:,1))
+     CALL normal30(x,6,1,2,nab(:,2))
+   END IF
+ CASE (2)             !two nodes on different sides
+   x(:, 7) = x(:,2) + x(:,4) - x(:,3)
+   x(:,10) = x(:,1) + x(:,5) - x(:,3)
+   x(:,11) = x(:,1) + x(:,6) - x(:,2)
+   x(:,12) = x(:,2) + x(:,6) - x(:,1)
+   IF( bounc(6) )THEN
+     ALLOCATE(nab(3,2))
+     CALL normal30(x,6,5,2,nab(:,1))
+     CALL normal30(x,4,6,1,nab(:,2))
+   END IF
+ CASE (3)             !two nodes of a side
+   x(:,6) = x(:,1) + x(:,2) - x(:,3)
+   IF( bounc(1) .AND. bounc(2) )THEN
+     ALLOCATE(nab(3,1))
+     CALL normal30(x,2,1,3,nab(:,1))
+   END IF
+ CASE (4)     !node 5, 1 & 2 on a side
+   x(:,6) = x(:,1) + x(:,2) - x(:,3)
+   x(:,10)= x(:,1) + x(:,5) - x(:,3)
+   IF( bounc(1))THEN
+     ALLOCATE(nab(3,2))
+     IF( bounc(5) ) CALL normal30(x,1,5,3,nab(:,1))
+     IF( bounc(2) ) CALL normal30(x,2,1,3,nab(:,2))
+   END IF
+ CASE (5)     !node 1, 2 & 4 on a side
+   x(:,6) = x(:,1) + x(:,2) - x(:,3)
+   x(:,7) = x(:,2) + x(:,4) - x(:,3)
+   IF( bounc(2))THEN
+     ALLOCATE(nab(3,2))
+     IF( bounc(1) ) CALL normal30(x,2,1,3,nab(:,1))
+     IF( bounc(4) ) CALL normal30(x,4,2,3,nab(:,2))
+   END IF
+ CASE (6)     !two sides on a boundary
+   x(:,5) = x(:,1) + x(:,3) - x(:,2)
+   x(:,6) = x(:,1) + x(:,2) - x(:,3)
+   !x(:,10) = 2d0*x(:,1) - x(:,2)
+   !x(:,11) = 2d0*x(:,1) - x(:,3)
+   IF( bounc(1) ) THEN
+     ALLOCATE(nab(3,2))
+     IF( bounc(3) ) CALL normal30(x,1,3,2,nab(:,1))
+     IF( bounc(2) ) CALL normal30(x,2,1,3,nab(:,2))
+   END IF
+ END SELECT
+ !IF( ASSOCIATED(nab) )nab(3,:) = 0d0                   !temporary
+
+ xc = MATMUL(x,ar)
+ SELECT CASE (bcode)
+ CASE (0:2)
+ !CASE (3:5)
+ CASE (3)
+   xc(:,6)   = (-x(:,10) +9d0*x(:,1) +9d0*x(:,2) -x(:,7))/16d0
+ CASE (4)
+   xc(:,6)   = (+3d0*x(:,1) +6d0*x(:,2) -x(:,7))/8d0
+ CASE (5)
+   xc(:,6)   = (-x(:,10) +6d0*x(:,1) +3d0*x(:,2) )/8d0
+ CASE ( 6)
+   xc(:,5)   = (+3d0*x(:,1) +6d0*x(:,3) -x(:,8))/8d0
+   xc(:,6)   = (+3d0*x(:,1) +6d0*x(:,2) -x(:,7))/8d0
+   !xc(:,5)   = (-x(:,11) +9d0*x(:,1) +9d0*x(:,3) -x(:,8))/16d0
+   !xc(:,6)   = (-x(:,10) +9d0*x(:,1) +9d0*x(:,2) -x(:,7))/16d0
+ END SELECT
+ !compute derivatives, jacobians, cartesian derivatives and curvatures
+ DO i=1,3
+   l(:,1:2) = MATMUL(xc,sfd(:,:,i))         !X_xita, X_eta
+   CALL vecpro(l(:,1),l(:,2),l(:,3))        !t3
+   CALL vecuni(3,l(:,3),lt)                 !unit t3 and Jacobian
+   !IF( dump )WRITE(58,"(3e15.3)")l(:,:)
+   jin(1,1) =  DOT_PRODUCT(l(:,2),t(:,2))/lt     ! phi^xita . t_x = xi_1
+   jin(2,1) = -DOT_PRODUCT(l(:,2),t(:,1))/lt     ! phi^eta  . t_x = eta_1
+   jin(1,2) = -DOT_PRODUCT(l(:,1),t(:,2))/lt     ! phi^xita . t_y = xi_2
+   jin(2,2) =  DOT_PRODUCT(l(:,1),t(:,1))/lt     ! phi^eta  . t_y = eta_2
+   lt = 2d0*area2/(a(i)**2+b(i)**2)          ! 2h/l = 2 (2A/l) 1/l = 2 2A/l^2
+   !IF( dump )WRITE(58,"(2e15.3)")jin(:,:)
+   DO n = 1,6
+      cdn(n,i) = ((jin(1,1)*sfd(n,1,i)+jin(1,2)*sfd(n,2,i))*b(i) + &
+                 -(jin(2,1)*sfd(n,1,i)+jin(2,2)*sfd(n,2,i))*a(i))*lt
+   END DO
+ END DO
+
+ a(:) = a(:)/area2                            !shape function derivatives
+ b(:) = b(:)/area2
+ area2 = area2/2d0                            !keep the element area
+ !x(3,:) =  x3
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE axep30
+
+ SUBROUTINE normal30(x,i,j,k,n)
+ IMPLICIT NONE
+ REAL(kind=8), INTENT(IN) :: x(:,:)
+ INTEGER(kind=4), INTENT(IN) :: i,j,k
+ REAL(kind=8) :: n(:)
+
+ REAL(kind=8) :: ts(3),tn(3),l
+
+     ts = x(:,i)-x(:,j)                                  !side Counter-clockwise
+     CALL vecuni(3,ts,l)                                 !unit vector
+     tn = (x(:,i) + x(:,j))/2d0 - x(:,k)                 !outward vector
+     l = DOT_PRODUCT(ts,tn)                              !proyection
+     n = tn - l*ts                                       !outward normal
+     CALL vecuni(3,n,l)                                  !unit vector
+ RETURN
+ END SUBROUTINE normal30

@@ -1,0 +1,81 @@
+ SUBROUTINE kgeom9(nnode,ndofe,nvarl,ntype,deriv,shape,phin,x,jac,r0, &
+                   str,stiff)
+ !******************************************************************************
+ !
+ !     computes geometric stiffness tangent matrix for 2-d shell/beam elements
+ !
+ !******************************************************************************
+ IMPLICIT NONE
+ !***  routine parameters
+ INTEGER (kind=4), INTENT(IN) :: nnode,ndofe,nvarl,ntype
+ REAL (kind=8), INTENT(IN) :: deriv(:),shape(:),phin(:),x(:,:),r0,jac,str(:)
+ REAL (kind=8), INTENT(IN OUT) ::  stiff(*)
+ !***  local variables
+ INTEGER (kind=4) i,j,ni,nj,nm,nq,posit,pstiff
+ REAL    (kind=8) t1,t2,phi,dphi,r,r02m1,value,derxi(nnode),dx(2)
+ pstiff(ni,nj,nvarl) = (2*nvarl-nj)*(nj-1)/2 + ni  !nj <= ni
+
+ !***code
+
+ phi  = DOT_PRODUCT(phin,shape)
+ derxi= deriv/jac
+ dphi = DOT_PRODUCT(phin,derxi)
+ dx   = MATMUL(x,derxi)
+ t1 = COS(phi)
+ t2 = SIN(phi)
+ SELECT CASE (ntype)
+ CASE (1)
+   nm = 2
+   nq = 3
+ CASE (2:3)
+   nm = 3
+   nq = 5
+   IF( ntype == 3 )THEN
+     r    = DOT_PRODUCT(x(1,:),shape)
+     r02m1 = 1d0/r0**2
+   END IF
+ END SELECT
+ DO j=1,nnode
+   nj = ndofe*(j-1)
+   DO i=j,nnode
+     ni = ndofe*(i-1)
+     !         contribution between u-u (MEMBRANE PART)
+     posit = pstiff(ni+1,nj+1,nvarl)
+     value = derxi(i)*derxi(j)*str(1)
+     stiff(posit) = stiff(posit) + value
+     IF(ntype == 3)stiff(posit) = stiff(posit) + r02m1*shape(i)*shape(j)*str(2)
+     posit = pstiff(ni+2,nj+2,nvarl)
+     stiff(posit) = stiff(posit) + value
+     !         contribution between theta(i)-u(j) (below the sub-block diagonal)
+     value = -(derxi(i)*t1+shape(i)*dphi*(-t2))*derxi(j)*str(nm) &
+             -shape(i)*derxi(j)*t1*str(nq)
+     IF(ntype == 3)value = value - r02m1*shape(i)*shape(j)*t1*str(4)
+     posit = pstiff(ni+3,nj+1,nvarl)
+     stiff(posit) = stiff(posit) + value
+     value = -(derxi(i)*t2+shape(i)*dphi*t1)*derxi(j)*str(nm)      &
+             -shape(i)*t2*derxi(j)*str(nq)
+     posit = pstiff(ni+3,nj+2,nvarl)
+     stiff(posit) = stiff(posit) + value
+     !         contribution between u(i)-theta(j) (above the sub-block diagonal)
+     IF(i > j) THEN
+       value = -derxi(i)*(dphi*(-t2)*shape(j)+t1*derxi(j))*str(nm) &
+&              -derxi(i)*shape(j)*t1*str(nq)
+       IF(ntype == 3)value = value - r02m1*shape(i)*shape(j)*t1*str(4)
+       posit = pstiff(ni+1,nj+3,nvarl)
+       stiff(posit) = stiff(posit) + value
+       value = -derxi(i)*(dphi*t1*shape(j)+t2*derxi(j))*str(nm)    &
+&              -derxi(i)*shape(j)*t2*str(nq)
+       posit = pstiff(ni+2,nj+3,nvarl)
+       stiff(posit) = stiff(posit) + value
+     END IF
+     !         contribution between theta(i)-theta(j)
+     value = -((derxi(i)*shape(j)+shape(i)*derxi(j))*(-t2*dx(1)+ &
+           t1*dx(2))-shape(i)*shape(j)*dphi*(t1*dx(1)+t2*dx(2)))*&
+           str(nm)-shape(i)*shape(j)*(-t2*dx(1)+t1*dx(2))*str(nq)
+     IF(ntype == 3)value = value  + r02m1*r*t2*shape(i)*shape(j)*str(4)
+     posit = pstiff(ni+3,nj+3,nvarl)
+     stiff(posit) = stiff(posit) + value
+   END DO
+ END DO
+ RETURN
+ END SUBROUTINE kgeom9

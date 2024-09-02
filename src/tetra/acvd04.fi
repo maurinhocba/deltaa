@@ -1,0 +1,44 @@
+ SUBROUTINE acvd04(ifpre,heade,lside,linear)
+ !******************************************************************
+ !
+ !*** updates internal node numbering and activates degrees of freedom
+ !
+ !******************************************************************
+ USE esets_db, ONLY : gnods, gelem !INTENT(OUT) gnods(maxnn,melen)
+ IMPLICIT NONE
+
+ ! dummy arguments
+ LOGICAL, INTENT(IN) :: linear    !flag TRUE if linear approach
+ LOGICAL, INTENT(IN OUT) :: lside !flag TRUE if topology already computed
+ INTEGER(kind=4) :: ifpre(:,:)
+ TYPE (ele04), POINTER :: heade   !pointer to first element in the set
+
+ ! local variables
+ INTEGER (kind=4) i,inode
+ TYPE (ele04), POINTER  :: e                     !element pointers
+
+ !***  create topological array  lnods(4:6,nelem)
+
+ IF(.NOT.lside .AND. linear) CALL toar04(heade,lside,gelem,gnods)
+
+ !*** activates degrees of freedom
+
+ e => heade                         !point to first element
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT   !if all elements processed, Exit loop
+   ifpre(1:3,e%lnods(1:4)) = 0    !release DOFs
+   gelem = gelem + 1                !update total number of elements
+   gnods(1:4,gelem) = e%lnods(1:4)  !pass to global array
+   i = 4
+   DO inode=5,8
+     IF( e%lnods(inode) > 0 )THEN
+        i = i+1
+        gnods(i,gelem) = e%lnods(inode)
+     END IF
+   END DO
+
+   e => e%next                      !point to next element
+ END DO
+
+ RETURN
+ END SUBROUTINE acvd04

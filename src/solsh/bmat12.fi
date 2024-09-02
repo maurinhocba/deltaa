@@ -1,0 +1,92 @@
+ SUBROUTINE bmat12(bmat,bq,b3,bs,thick,quad,zigzag,bpp,btp,nn)
+ !
+ !*** B matrix  for a 3-D 6/8-node solid-shell element
+ !    Green Lagrange Strains (TLF)
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER (kind=4) :: nn !number of nodes per face
+ REAL (kind=8), INTENT(IN) :: bq(:,:,:,:),  & !in-plane matrix at faces
+                              b3(:,:),      & !transverse strain at center
+                              bs(:,:,:,:),  & !transverse shear strain at faces
+                              thick,        & !element thickness
+                              bpp(:,:,:),   & !additional in-plane strain at center
+                              btp(:,:,:)      !additional transverse strain at center
+
+ LOGICAL, INTENT(IN) :: quad,               & !.TRUE. if quad approach
+                        zigzag                !.TRUE. if additional DOFs exist
+
+ REAL (kind=8), INTENT(OUT) :: bmat(:,:)    !B-matrix
+
+
+ ! local variables
+ INTEGER (kind=4) :: i,j,j3,ii,i2,ib                !indexes
+
+
+ ib = 2*nn*3  !number of basic DOFs
+ IF( quad ) ib = 2*ib        !Sprism with quad approach
+ ! in-plane components
+ i = 1                       ! first DOF of lower face node
+ DO j=1,nn
+   !for each main node in lower face
+   ii = i
+   i2 = ii+2
+   bmat(ii:i2,1) = bq(:, j,1,1)/2d0   !membrane strain 11
+   bmat(ii:i2,2) = bq(:, j,2,1)/2d0   !membrane strain 22
+   bmat(ii:i2,3) = bq(:, j,3,1)/2d0   !membrane strain 12
+   bmat(ii:i2,4) = b3(:, j)           !transverse strain
+   bmat(ii:i2,5) =-bq(:, j,1,1)/thick !bending strain 11
+   bmat(ii:i2,6) =-bq(:, j,2,1)/thick !bending strain 22
+   bmat(ii:i2,7) =-bq(:, j,3,1)/thick !bending strain 12
+   bmat(ii:i2,8) = bs(:, j,1,1)       !shear strain 1 bottom
+   bmat(ii:i2,9) = bs(:, j,2,1)       !shear strain 2 bottom
+   bmat(ii:i2,10)= bs(:, j,1,2)       !shear strain 1 top
+   bmat(ii:i2,11)= bs(:, j,2,2)       !shear strain 2 top
+   !for each main node in upper face
+   j3 = j+nn
+   ii = ii+3*nn
+   i2 = ii+2
+   bmat(ii:i2,1) = bq(:, j,1,2)/2d0   !membrane strain 11
+   bmat(ii:i2,2) = bq(:, j,2,2)/2d0   !membrane strain 22
+   bmat(ii:i2,3) = bq(:, j,3,2)/2d0   !membrane strain 12
+   bmat(ii:i2,4) = b3(:,j3)           !transverse strain
+   bmat(ii:i2,5) = bq(:, j,1,2)/thick !bending strain 11
+   bmat(ii:i2,6) = bq(:, j,2,2)/thick !bending strain 22
+   bmat(ii:i2,7) = bq(:, j,3,2)/thick !bending strain 12
+   bmat(ii:i2,8) = bs(:,j3,1,1)       !shear strain 1 bottom
+   bmat(ii:i2,9) = bs(:,j3,2,1)       !shear strain 2 bottom
+   bmat(ii:i2,10)= bs(:,j3,1,2)       !shear strain 1 top
+   bmat(ii:i2,11)= bs(:,j3,2,2)       !shear strain 2 top
+   IF( quad ) THEN
+     ii = ii+3*nn  !        extra node in lower face
+     i2 = ii+2
+     bmat(ii:i2,1) = bq(:,j3,1,1)/2d0
+     bmat(ii:i2,2) = bq(:,j3,2,1)/2d0
+     bmat(ii:i2,3) = bq(:,j3,3,1)/2d0
+     bmat(ii:i2,5) =-bq(:,j3,1,1)/thick
+     bmat(ii:i2,6) =-bq(:,j3,2,1)/thick
+     bmat(ii:i2,7) =-bq(:,j3,3,1)/thick
+     ii = ii+3*nn  !        extra node in lower face
+     i2 = ii+2
+     bmat(ii:i2,1) = bq(:,j3,1,2)/2d0
+     bmat(ii:i2,2) = bq(:,j3,2,2)/2d0
+     bmat(ii:i2,3) = bq(:,j3,3,2)/2d0
+     bmat(ii:i2,5) = bq(:,j3,1,2)/thick
+     bmat(ii:i2,6) = bq(:,j3,2,2)/thick
+     bmat(ii:i2,7) = bq(:,j3,3,2)/thick
+   END IF
+   IF( zigzag ) THEN
+     i2 = ib+2*j
+     ii = i2-1
+     bmat(ii:i2,12) = bpp(:,j,1)
+     bmat(ii:i2,13) = bpp(:,j,2)
+     bmat(ii:i2,14) = bpp(:,j,3)
+     bmat(ii:i2,15) = bpp(:,j,4)
+     bmat(ii:i2,16) = btp(:,j,1)
+     bmat(ii:i2,17) = btp(:,j,2)
+   END IF
+   i = i+3                  !update first DOF of lower face node
+ END DO
+ !WRITE(58,"(24f10.4)")bmat(1:24,1:11)
+ !IF(zigzag)WRITE(58,"(8f10.4)")bmat(25:32,12:17)
+ RETURN
+ END SUBROUTINE bmat12

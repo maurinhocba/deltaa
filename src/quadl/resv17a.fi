@@ -1,0 +1,174 @@
+ SUBROUTINE resv17a( heade, coora, resid, ierr, ngaus, nnode, lcar, epsi)
+ !-------------------------------------------------------------------
+ !
+ !          EVALUATION OF INTERNAL FORCES ELEMENT T-L 2-D QUAD
+ !            8-node serendipity elemento with 2x2 GP integration
+ !
+ !-------------------------------------------------------------------
+ IMPLICIT NONE
+
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: ngaus, &     !number of gauss points
+                                 nnode        !number of nodes
+ INTEGER (kind=4), INTENT(OUT) :: ierr        !flag for error detection
+ REAL(kind=8),INTENT (IN) :: coora(:,:), &  !present coordinates
+                             lcar,       &  !
+                             epsi           !
+ REAL(kind=8),INTENT (IN OUT) :: resid(:,:)   !internal nodal forces
+ TYPE (ele17), POINTER  :: heade              !pointer to first element
+
+ ! local variables
+ LOGICAL :: newmt     !TRUE if material constant computation necessary
+ INTEGER (kind=4) :: osec     !associated material of previous element
+ INTEGER (kind=4) ielem, & !element number
+                  isec,  & !associated material
+                  i,j,k,n  !different indexes
+
+ REAL (kind=8) sigma(3),   & !stresses (different measures)
+               stran(3),   & !C=U^2  also Log strains
+               stre(3),    & !modified strains
+               strw(3),e2w,& !wrinkled part
+               bmat(2,nnode,3), & !B matrix
+               x(2,nnode),      & !nodal coordinates of the element
+               g(2,2),     & !in-plane deformation gradient
+               theta,center,radius, & !eigevector components in local system
+               lb(2),lc(2),& !eigenvalues
+               bet(2),     & !eigenvalues
+               c(4),fac,   & !Elastic constitutive matrix for plane stress
+               nu,nu4,nu12,& !Poisson ratio
+               eps0,th,    & !deformation threshold, critical stress
+               p(3,3),     & !P matrix
+               st, ct, ss, ssc, cc, ccc, s2, s2c, & !aux vaulues for P
+               rl(2,nnode)   !nodal internal equivalent forces
+ REAL(kind=8) :: none(nnode),rnone
+
+ INTEGER (kind=4), PARAMETER :: ngaud = 2
+
+ TYPE (ele17), POINTER :: e    !pointer to an element data
+ TYPE (section), POINTER :: sec    !pointer to section data
+ TYPE (mater), POINTER :: mat  !pointer to an material data
+
+ !***  Computes nodal internal forces
+
+ osec = -1                           !no previous material
+ e => heade                          !point to first element in the list
+ DO                                  !loop over all the elements
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = e%numel                   !element number
+   isec = e%matno                   !associated material
+   !     SET MATERIAL CONSTANTS
+   newmt = osec /= isec             !same material than previous ?
+   IF(newmt)THEN                     !if new material, get properties
+     sec => psecs(isec)%p
+     osec = isec                    !keep present material
+     mat => sec%mtbas                !point to associated material
+     IF(mat%mtype /= 1 )STOP "material type must be 1"
+     !  elasticity constants
+     nu = mat%prope(2)      !poisson ratio
+     nu4 = nu/4d0           !aux value
+     nu12 = (1d0-nu)/2d0    !aux value
+     c(1:4) = mat%prope(7:10)   ! plane stress elasticity matrix
+     eps0 = -3.29*(sec%rprop(1)/lcar)**2/(1+nu)  !deformation threshold (negative value)
+     th = eps0/100d0            !threshold to assume a negative strain
+   END IF
+   x = coora(:,e%lnods)                   !*** computes actual configuration
+   rl = 0d0                               !Initializes equivalent nodal forces
+   !   Gauss point loop
+   !   of each Gauss point we must keep STATE( taut,wrinkled,slack) and THETA
+   DO k=1,ngaus
+     ! compute deformation gradient F and U^2=tp(F) F
+     g = MATMUL(x,e%cartd(:,:,k))  !deformation gradient
+     stran(1) = g(1,1)*g(1,1) + g(2,1)*g(2,1)  !U^2(1,1)
+     stran(2) = g(1,2)*g(1,2) + g(2,2)*g(2,2)  !U^2(2,2)
+     stran(3) = g(1,1)*g(1,2) + g(2,1)*g(2,2)  !U^2(1,2)
+     !!computes Hencky (logarithmic) in-plane strains
+     !CALL lgst14(stran,r1,r2,lb,'RESV17',ierr)
+     !IF( ierr == 1 )THEN
+     !  WRITE(55,"(4i5,3e12.4)",ERR=9999) e%lnods(1:4),stran(1:3)
+     !  WRITE(55,"(2e15.4)",ERR=9999) x
+     !  CALL runen3('RESV17a: negative eigenvalues of U^2')
+     !END IF
+     stran(1:2) = (stran(1:2)-1d0 )/2d0
+     radius = SQRT((stran(1)-stran(2))**2+stran(3)**2)/2D0
+     center = (stran(1)+stran(2))/2d0
+     lb(1) = center+radius
+     lb(2) = center-radius
+     IF( lb(2) > th )THEN !taut
+       stre = stran
+       e%gausv(1,k) = 2d0
+     ELSE IF( lb(1) > th )THEN              !wrinkled
+       theta = ATAN2(stran(3),stran(1)-stran(2))/2d0
+       e%gausv(2,k) = theta
+       e%gausv(3:5,k) = stran
+       st = SIN(theta)  !sin(theta)
+       ct = COS(theta)  !cos(theta)
+       ss = st*st       !sin^2(theta)
+       ssc= ss*ss       !sin^4(theta)
+       cc = 1d0-ss      !cos^2(theta)
+       ccc= cc*cc       !cos^4(theta)
+       s2 = 2d0*st*ct   !sin(2theta)
+       s2c=s2*s2        !sin^2(2theta)
+       p(1,1:3) = (/ 1d0 -ssc-nu4*s2c,  -s2c/4d0-nu*ssc,    +nu12*ss*s2 /)  !proyection
+       p(2,1:3) = (/  -s2c/4d0-nu*ccc, 1d0 -ccc-nu4*s2c,    +nu12*cc*s2 /)  !matrix
+       p(3,1:3) = (/    (ss+nu*cc)*s2,    (cc+nu*ss)*s2,  1d0 -nu12*s2c /)  !P
+       stre = MATMUL(p,stran)  !tensile strain tensor
+       strw = stran - stre     !compresion strain tensor
+       IF( cc > 0.1 )THEN   !compute strain modulus
+         e2w = strw(2)/cc
+       ELSE
+         e2w = strw(1)/ss
+       END IF
+       IF( eps0 < e2w )THEN !not yet critical
+         fac = (1d0-e2w/2d0/eps0)            !use parabola
+         stre = stre + fac*strw              !use parabola
+       ELSE
+         fac = 0.5d0
+         stre = stre + eps0/2d0/e2w*strw               !use threshold
+       END IF
+       e%gausv(1,k) = 2d0*fac-1d0
+     ELSE                                    !slack
+       theta = ATAN2(stran(3),stran(1)-stran(2))/2d0
+       st = SIN(theta)  !sin(theta)
+       ct = COS(theta)  !cos(theta)
+       ss = st*st       !sin^2(theta)
+       cc = 1d0-ss      !cos^2(theta)
+       s2 = 2d0*st*ct   !sin(2theta)
+       IF( lb(1) > eps0 )THEN
+         st = (1d0-lb(1)/2d0/eps0)
+         lb(1) = lb(1)*st
+      ELSE
+         st = 0.5d0
+         lb(1) = eps0/2d0
+       END IF
+       IF( lb(2) > eps0 )THEN
+         ct = (1d0-lb(2)/2d0/eps0)
+         lb(2) = lb(2)*ct
+       ELSE
+         lb(2) = eps0/2d0
+         ct = 0.5d0
+       END IF
+       stre = lb(1)*(/ cc,ss,s2 /) + lb(2)*(/ ss,cc,-s2 /)
+       e%gausv(1,k) = -MAX(st,ct)
+     END IF
+     sigma(1) = c(1)*stre(1)+c(2)*stre(2)
+     sigma(2) = c(2)*stre(1)+c(3)*stre(2)
+     sigma(3) = c(4)*stre(3)
+     e%stint(:,k) = sigma   !keep stresses (2nd Piola Kirchhoff)
+     !***   compute Int(B**t*sigma) on element level
+     sigma = sigma*e%dvol(k)     !Original dvol used (TLF)
+     !       actual configuration B Matrices
+     CALL bmat17(e%cartd(:,:,k),bmat,g,nnode,rnone,none,1)
+     CALL proma3(rl(1,1),bmat(1,1,1),sigma(1),2*nnode,3,.FALSE.)  !nodal contributions
+   END DO
+
+   DO i=1,nnode             !for each node in the element
+     n = e%lnods(i)     !node
+     resid(1:2,n) = resid(1:2,n)+rl(1:2,i) !sum internal force
+   END DO
+
+   e => e%next          !point to next element in the list
+ END DO
+
+ RETURN
+ 9999 CALL runen2(' ')
+ END SUBROUTINE resv17a

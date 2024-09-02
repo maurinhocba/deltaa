@@ -1,0 +1,16 @@
+ SUBROUTINE intem7(xita,eta,stype,e,stran)
+ IMPLICIT NONE
+ INTEGER (kind=4), INTENT(IN) :: stype
+ REAL (kind=8), INTENT(IN) :: xita,eta,stran(:,:)
+ REAL (kind=8), INTENT(OUT) :: e(:)
+
+ REAL    (kind=8) zeta
+
+ zeta = 1d0-xita-eta
+ IF(stype == 2) THEN
+   e = MATMUL(stran(1:3,1:3),(/ zeta,xita,eta /))
+ ELSE  !stype = 3
+   e = MATMUL(stran(1:3,1:3),(/ 1d0-2d0*eta, 1d0-2d0*zeta, 1d0-2d0*xita /))
+ END IF
+ RETURN
+ END SUBROUTINE intem7

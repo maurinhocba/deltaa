@@ -1,0 +1,42 @@
+ SUBROUTINE loadp2(ndime,nelem,igrav,loadf,gvect,gravy,heade)
+ !********************************************************************
+ !
+ !***  evaluates gravity loads for truss elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ INTEGER (kind=4) ndime,nelem,igrav
+ REAL    (kind=8) loadf(:,:),gvect(:),gravy
+ TYPE(ELE02), POINTER :: heade
+ !        local variables
+ INTEGER (kind=4) ielem,l,n,isec,osec
+ REAL    (kind=8) weigt,area,dens
+ TYPE(ELE02), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL :: newm
+
+ IF(igrav /= 0 .AND. gravy /= 0.0) THEN
+
+   osec = -1
+   e => heade
+   DO ielem=1,nelem
+     IF( e%lnods(1) == e%lnods(2) ) CYCLE
+     isec  = e%matno
+     newm = isec /= osec
+     IF ( newm )THEN
+       sec => psecs(isec)%p
+       osec = isec
+       area = sec%rprop(1)
+       dens = sec%mtbas%prope(5)
+     END IF
+     weigt = gravy*dens*area*e%gausv(1)/2d0
+
+     DO n = 1,nnode
+       l = e%lnods(n)
+       loadf(1:ndime,l) = loadf(1:ndime,l) + weigt*gvect
+     END DO
+     e => e%next
+   END DO
+ END IF
+ RETURN
+ END SUBROUTINE loadp2

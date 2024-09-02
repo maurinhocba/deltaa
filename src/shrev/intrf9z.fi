@@ -1,0 +1,100 @@
+ SUBROUTINE intrf9z(axesc, dmat, jac, stra0, stres, bts, x, phig, phil, estr, psi, eh, gl)
+ !***********************************************************************
+ !
+ !****this routine compute the internal nodal forces for element no. 9
+ !    2-3 node shell/beam  element
+ !***********************************************************************
+ IMPLICIT NONE
+
+ !***  routine parameters
+ INTEGER(kind=4), INTENT(IN) :: axesc
+ REAL(kind=8), INTENT(IN) :: dmat(:), jac(:), stra0(:,:),                &
+                             x(:,:),phig(:),phil(:),psi(:,:),gl
+ REAL(kind=8), INTENT(OUT) :: stres(:,:),bts(:,:),estr(:),eh(:,:)
+ !***  local variables
+ INTEGER (kind=4) n
+ REAL    (kind=8) phin(2),dx(2),l,  &
+                  stra(7),str(7),derxi(2),dphi,phi,xi,t1,t2
+ REAL (kind=8),PARAMETER :: twopi=6.283185307179586d0
+
+ !     compute the local cartesian system
+ IF(axesc == 0) THEN
+   phin = phig
+ ELSE
+   DO n=1,2
+     phin(n) = phig(n) + phil(MIN(axesc,n))
+   END DO
+ END IF
+ IF(ABS(phin(2)-phin(1)) > 3.2d0) THEN
+   DO n=1,2
+      IF(phin(n) < 0) phin(n) = phin(n)+twopi
+   END DO
+ END IF
+ !     compute actual angles and curvatures
+ l = 2d0*jac(1)
+ phi  = (phin(1)+phin(2))/2d0                 !angle at Gauss Point
+ derxi= (/ -1d0, 1d0 /)/L                     !Nodal function derivatives
+ xi   = DOT_PRODUCT(phin,derxi)
+ dx(:) = MATMUL(x,derxi)
+ t1 = COS(phi)
+ t2 = SIN(phi)
+ !       strains
+ stra(1) = dx(1)*dx(1) + dx(2)*dx(2)
+ stra(2) = -xi*(dx(1)*t1+dx(2)*t2)
+ stra(3) = -t2*dx(1) + t1*dx(2)
+
+ stra(1:3)= stra(1:3)-stra0(1:3,1)
+ stra(1)= stra(1)/2d0
+ stra(5)= stra(3)
+ ! jac = L/2
+ stra(3) = -psi(1,1)/l             !psi/L
+ stra(4) =  psi(1,2)/l
+ stra(6) =  psi(1,1)/2d0
+ stra(7) =  psi(1,2)/2d0
+ !     evaluates incremental and total stresses at gauss points
+ str(1) = dmat(1)*stra(1)+ dmat(2)*stra(2)+ dmat(3)*stra(3)+ dmat(4)*stra(4)
+ str(2) = dmat(2)*stra(1)+ dmat(5)*stra(2)+ dmat(6)*stra(3)+ dmat(7)*stra(4)
+ str(3) = dmat(3)*stra(1)+ dmat(6)*stra(2)+ dmat(8)*stra(3)+ dmat(9)*stra(4)
+ str(4) = dmat(4)*stra(1)+ dmat(7)*stra(2)+ dmat(9)*stra(3)+dmat(10)*stra(4)
+ str(5) = dmat(11)*stra(5)+dmat(12)*stra(6)+dmat(13)*stra(7)
+ str(6) = dmat(12)*stra(5)+dmat(14)*stra(6)+dmat(15)*stra(7)
+ str(7) = dmat(13)*stra(5)+dmat(15)*stra(6)+dmat(16)*stra(7)
+ ! store values for post-process
+ stres(1,1) = str(1)
+ stres(2,1) = str(2)
+ stres(3,1) = str(5)
+ stres(4,1) = (str(3)+str(4))/2d0
+ stres(5,1) = (str(6)+str(7))/2d0
+ estr(1) = stra(1)
+ estr(2) = stra(2)
+ estr(3) = stra(5)
+ estr(4) = stra(3)+stra(4)
+ estr(5) = stra(6)+stra(7)
+ !     sums contribution to residual forces
+ bts = 0d0
+ str = str*l                                 !stress * L
+ derxi= (/ -1d0, 1d0 /)/l                     !Nodal function derivatives (arc-length)
+ dphi = DOT_PRODUCT(phin,derxi)               !angle derivative (arc-length)
+ t1 = COS(phi)                                !tangent vector (r or x1 component)
+ t2 = SIN(phi)                                !tangent vector (z or x2 component)
+ DO n=1,2                        !for each node
+   bts(1,n)= bts(1,n)+ str(1)*derxi(n)*dx(1)
+   bts(2,n)= bts(2,n)+ str(1)*derxi(n)*dx(2)
+   !       bending contribution
+   bts(1,n)= bts(1,n)- str(2)*t1*dphi*derxi(n)
+   bts(2,n)= bts(2,n)- str(2)*t2*dphi*derxi(n)
+   bts(3,n)= bts(3,n)- str(2)*(dphi*0.5d0*(-t2*dx(1)+t1*dx(2))+ &
+                                derxi(n)*( t1*dx(1)+t2*dx(2)))
+   !       transverse shear contribution
+   bts(1,n)= bts(1,n)- str(5)*derxi(n)*t2
+   bts(2,n)= bts(2,n)+ str(5)*derxi(n)*t1
+   bts(3,n)= bts(3,n)- str(5)*0.5d0*(dx(1)*t1+dx(2)*t2)
+ END DO
+ ! phi
+ bts(4,1)=  str(3)*derxi(1)+ str(6)/2d0
+ bts(4,2)=  str(4)*derxi(2)+ str(7)/2d0
+
+! eh(1,1) = ( dmat(17)*stra(6) + dmat(18)*stra(7) )*gl     !tau-b
+! eh(3,1) = ( stra(5) - stra(6) - stra(7) )*gl + eh(1,1)   !tau-c
+ RETURN
+ END SUBROUTINE intrf9z

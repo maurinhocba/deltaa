@@ -1,0 +1,124 @@
+ SUBROUTINE gaus18(heade,coord,istop,nnode,gauss,angdf,ngaus,shell,gpc,check,locax)
+ !-------------------------------------------------------------------
+ !--- evaluates gauss points constants for shell element 18
+ !--------------------------------------------------------------------
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(OUT) :: istop
+ INTEGER (kind=4), INTENT(IN) :: nnode,ngaus,locax
+ REAL (kind=8), INTENT(IN) :: coord(:,:), & !initial coordinates
+                              angdf(:)      !default angles Gl_X - Ort_Axes
+ REAL (kind=8), INTENT(IN OUT) :: gpc(:,:)  !Gauss-point coordinates
+ TYPE (ele18), POINTER :: heade   !pointer to first element in the set
+ LOGICAL, INTENT (IN OUT) :: gauss    !TRUE if initial constant exists
+ LOGICAL, INTENT (IN OUT) :: check    !TRUE if connectivities order must be checked
+ LOGICAL, INTENT (IN) :: shell        !TRUE to consider asummed shear strains
+
+ INTEGER (kind=4) i,j,k,l,ielem
+ REAL (kind=8) :: x(3,nnode),cd(nnode,3),shape(nnode,ngaus),dvol, &
+                  deriv(nnode,3,ngaus),posgp(3),weigp(3)
+
+ REAL (kind=8) :: ang(3),alpha,factor,rm(3,3),lb(3,3),gpw(ngaus),t(3)
+ TYPE (ele18), POINTER :: e
+ LOGICAL :: use_gang, use_ang
+
+ INTERFACE
+   INCLUDE 'check_orientation8.h'
+ END INTERFACE
+
+ !     ---------------------------------------------------------
+ IF( gauss ) RETURN
+
+ !       gauss points in local coordinates and weigths
+ IF( ngaus == 4)THEN
+   gpc = RESHAPE((/  sq3i, -sq3i, -sq3i,  -sq3i,  sq3i, -sq3i, &
+                    -sq3i, -sq3i,  sq3i,   sq3i,  sq3i,  sq3i /),(/ 3,ngaus /))
+   gpw(1:ngaus) = 2d0
+ ELSE IF( ngaus == 8 )THEN
+   gpc = RESHAPE((/ -sq3i, -sq3i, -sq3i,   sq3i, -sq3i, -sq3i, &
+                    -sq3i,  sq3i, -sq3i,   sq3i,  sq3i, -sq3i, &
+                    -sq3i, -sq3i,  sq3i,   sq3i, -sq3i,  sq3i, &
+                    -sq3i,  sq3i,  sq3i,   sq3i,  sq3i,  sq3i /),(/ 3,ngaus /))
+   gpw(1:ngaus) = 1d0
+ ELSE IF( ngaus == 27 )THEN
+   CALL gaussq (3 ,posgp ,weigp ) ! get standard  gauss points in local coordinates and weigths
+   l = 0
+   DO i=1,3
+     DO j=1,3
+       DO k=1,3
+         l = l+1
+         gpc(:,l) = (/ posgp(k),posgp(j),posgp(i) /)
+         gpw(l) = weigp(k)*weigp(j)*weigp(i)
+       END DO
+     END DO
+   END DO
+ ELSE       
+   STOP 'wrong number of gauss point'
+ END IF
+ !       gauss points shape and derivatives of nodal functions
+ DO k=1,ngaus
+   CALL shape5(deriv(1,1,k),shape(1,1),gpc(1,k),gpc(2,k),gpc(3,k),nnode)
+ END DO
+
+
+ !     ---------------------------------------------------------
+
+ factor = ASIN(1d0)/90d0         !pi/180
+ ang = angdf*factor
+ use_gang = ANY(angdf /= 0d0)
+ CALL inrotm(ang,rm(1,1))
+
+ e => heade       !point to first element
+
+ DO               !loop over the elements in the set
+   IF (.NOT.ASSOCIATED (e) ) EXIT  !if all element processed, exit
+   ielem = e%numel
+
+   x = coord(:,e%lnods)     !get original coordinates
+
+   IF( ANY(e%angle /= 0d0))THEN   !if local angles defined for the element
+     ang = e%angle*factor
+     CALL inrotm(ang,lb(1,1))
+     lb = MATMUL(rm,lb)
+     use_ang = .TRUE.
+   ELSE
+     lb = rm
+     use_ang = use_gang
+   END IF
+   IF( shell )THEN  !for shell version
+     IF( check ) THEN
+       SELECT CASE (locax)
+       CASE(1)
+         t = (/ 1d0, 0d0, 0d0 /)
+       CASE(2)
+         t = (/ 0d0, 1d0, 0d0 /)
+       CASE(3)
+         t = (/ 0d0, 0d0, 1d0 /)
+       CASE DEFAULT
+         t = lb(:,3)
+       END SELECT
+       CALL check_orientation8(e%lnods,x,t)
+     END IF
+     CALL lcas18(deriv,lb,e%cartd,e%dvol,x,ngaus,use_ang,locax,e%nfdas,e%jacin,ielem)
+     e%dvol= e%dvol*gpw(1)                !all GP have the same weigth
+   ELSE             !standard version
+     IF(locax == 0)THEN
+       ! compute element local systems, nodal functions and derivatives
+       DO k=1,ngaus
+         CALL jacob5(cd(1,1),deriv(1,1,k),dvol,x(1,1),nnode,ielem,istop)
+         e%cartd(:,:,k) = MATMUL(cd,lb)
+         e%dvol(k)= dvol*gpw(k)
+       END DO
+     ELSE
+       CALL lcas18(deriv,lb,e%cartd,e%dvol,x,ngaus,use_ang,locax,ielem=ielem)
+       e%dvol= e%dvol*gpw(1)                !all GP have the same weigth
+     END IF
+   END IF
+   e%stint = 0d0   !Initializes stresses
+
+   e => e%next          !point to next element
+ END DO
+ gauss = .TRUE.
+
+ RETURN
+ END SUBROUTINE gaus18

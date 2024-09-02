@@ -1,0 +1,84 @@
+ SUBROUTINE masmt1(ndime,ndofn,nelem,heade,emass,lumpd,gmass,sumat,ifpre)
+ !********************************************************************
+ !
+ !***   evaluation of mass matrix for truss elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ !***  dummy arguments
+ LOGICAL, INTENT(IN) :: lumpd
+ INTEGER (kind=4), INTENT(IN) :: ndime,ndofn,nelem,ifpre(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: gmass(:),emass(:,:),sumat
+ TYPE(ele01), POINTER :: heade
+
+ !***  local variables
+ INTEGER (kind=4) ielem,nvarl,l,i,n,j,lm(12),posn,isec,osec,ndofe,nn
+ REAL    (kind=8) tmass,rmass,mass(78),sume1,tm,rm
+ TYPE(ele01), POINTER :: e
+ TYPE(section), POINTER :: sec
+ LOGICAL :: newm,same
+ INTEGER (kind=4) poesti
+ poesti(i,j,n) = (2*n-i)*(i-1)/2+j    ! position i,j in mass(nxn)
+
+ !***  loop over all the elements
+
+ osec = -1
+ e => heade
+ sume1 = 0d0
+ DO ielem=1,nelem
+   isec  = e%matno
+   newm = isec /= osec
+   IF ( newm )THEN
+     sec => psecs(isec)%p
+     tmass = sec%rprop(5)
+     rmass = sec%rprop(6)
+     osec = isec
+   END IF
+   same =  ( e%lnods(2) == 0 )
+   nn = 2
+   IF( same ) nn = 1
+   IF( e%rot )THEN
+     ndofe = ndofn
+   ELSE
+     ndofe = ndime
+   END IF
+   nvarl = ndofe*nn
+   tm = tmass/nn
+   rm = rmass/nn
+
+   DO n=1,nn
+     l = e%lnods(n)
+     emass(1:ndime,l) = emass(1:ndime,l) + tmass
+     IF( e%rot )  &
+       emass(ndime+1:ndofe,l) = emass(ndime+1:ndofe,l) + rmass
+   END DO
+   sume1 = sume1 + tmass
+
+   IF(.NOT.lumpd) THEN !use diagonal mass
+     l=0
+     DO n = 1,nn
+       j = ndofe*(n-1)
+       DO i = 1,ndime
+         posn = poesti(j+i,j+i,nvarl)
+         mass(posn) = tm
+       END DO
+       DO i = ndime+1,ndofe
+         posn = poesti(j+i,j+i,nvarl)
+         mass(posn) = rm
+       END DO
+       DO i = 1,ndofe
+         l = l+1
+         lm(l) = ifpre(i,j)
+       END DO
+     END DO
+
+     CALL ensmat(nvarl,lm(1),mass(1),gmass(1))
+   END IF
+   e => e%next
+ END DO
+ !IF(iwrit == 1) &
+ WRITE(lures,"(//'  total mass for SPOT element :', e15.7)",ERR=9999)sume1
+ sumat = sumat + sume1
+ RETURN
+ 9999 CALL runen2(' ')
+ END SUBROUTINE masmt1

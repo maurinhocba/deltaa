@@ -1,0 +1,137 @@
+ SUBROUTINE stif04(heade, gstif, force, coora)
+
+ IMPLICIT NONE
+                               !--------- to optimize ---------
+ INTEGER (kind=4), PARAMETER :: ndime =3, nvarl = 24, nstre = 6
+ REAL (kind=8), INTENT(IN) :: coora(:,:)
+ REAL (kind=8), INTENT(IN OUT) :: gstif(:),force(:)
+ TYPE (ele04), POINTER :: heade
+
+ !Local Variables
+ LOGICAL, PARAMETER :: natst = .FALSE.
+ TYPE (ele04), POINTER :: e
+ LOGICAL :: newmt,found
+ INTEGER (kind=4) :: ielem,isec,i,j,k,l,osec,mtype,ierr
+
+ REAL (kind=8) x(3,4),t(3,3),y(3,4),jac,                  &
+               bdev(12,nstre),bvol(nvarl),cds(4,3,4),     &
+               aux1,aux2,km,g,d(6,6),da(21),young,poiss,bmat(12,6)
+
+ REAL (kind=8) :: stiff(300),s(78) !300 = nvarl*(nvarl+1)/2
+
+ TYPE (section), POINTER :: sec
+ TYPE (mater), POINTER :: mat
+
+ !***  Compute Element Stiffness matrix for all elements
+
+ osec = -1
+ e => heade
+
+ DO
+   IF (.NOT.ASSOCIATED (e) ) EXIT    !last element processed => EXIT
+   ielem = e%numel
+   isec = e%matno
+   newmt = osec /= isec
+   IF(newmt)THEN                     !if new material, get properties
+     CALL sect_search(isec,found,sec)
+     mat => sec%mtbas
+     osec = isec                    !keep present material
+     mtype = mat%mtype              !type of base material
+
+     IF( mtype == 1)THEN
+       km = mat%prope(4)             ! bulk modulus
+       g  = mat%prope(3)             ! shear modulus
+       young = mat%prope(1)
+       poiss = mat%prope(2)
+       aux1 = 2*g*(1-poiss)/(1-2*poiss)
+       aux2 = 2*g*poiss/(1-2*poiss)
+       d = RESHAPE((/aux1,aux2,aux2,0d0,0d0,0d0, &
+                     aux2,aux1,aux2,0d0,0d0,0d0, &
+                     aux2,aux2,aux1,0d0,0d0,0d0, &
+                      0d0, 0d0, 0d0,  g,0d0,0d0, &
+                      0d0, 0d0, 0d0,0d0,  g,0d0, &
+                      0d0, 0d0, 0d0,0d0,0d0,  g /),(/6,6/))
+       newmt = .FALSE.               !same material than previous ?
+     END IF
+   END IF
+
+   x(:,1:4) = coora(:,e%lnods(1:4))   !nodes of main element
+
+   DO i=1,4
+     IF( e%facs(i) > 0d0 ) THEN          !opposite node exists
+       l = e%lnods(i+4)
+       y(:,1:3) = x(:,kk(:,i)) !first three nodes
+       y(:,4)   = coora(:,l)   !fourth (opposite node)
+       CALL jacob5(cds(1,1,i),nd0(1,1),jac,y,4,ielem,ierr)
+     END IF
+   END DO
+   t(:,:) = MATMUL(x,e%cd) !x(1:3) Main element derivatives
+
+   CALL bmat04(e%cd,bdev,t,bvol,cds,e%facs)
+
+   ! deviatoric part
+   aux1 = g*e%dvol
+   k = 0
+   DO i=1,12
+     DO j=i,12
+       k = k+1
+       stiff(k) = (DOT_PRODUCT(bdev(i,1:3),bdev(j,1:3))*2d0 + &
+                   DOT_PRODUCT(bdev(i,4:6),bdev(j,4:6)))*aux1
+     END DO
+     stiff(k+1:k+12) = 0d0
+     k = k+12
+   END DO
+   stiff(k:300) = 0d0
+   ! volumetric part
+   aux1 = km*e%dvol
+   k = 0
+   DO i=1,nvarl
+     DO j=i,nvarl
+       k = k+1
+       stiff(k) = stiff(k)+bvol(i)*bvol(j)*aux1
+     END DO
+   END DO
+
+  ! CALL bmat5(e%cd,bdev,t,4)
+  ! k = 0
+  ! DO i=1,6
+  !   DO j=i,6
+  !     k = k+1
+  !     da(k) = d(i,j)*e%dvol
+  !   END DO
+  ! END DO
+  ! s = 0d0
+  ! CALL btdbpr(bdev(1,1),da(1),s(1),12,nstre) ! B^T D B
+
+   ! assemble
+   CALL stiaux(8,e%lnods(1),nvarl,3,stiff(1),force(1),gstif(1) )
+   !CALL stiaux(4,e%lnods(1),12,3,s(1),force(1),gstif(1) )
+   e => e%next
+ END DO
+
+ RETURN
+
+ END SUBROUTINE stif04
+
+ SUBROUTINE bmat5(cartd,bmat,t,nnode)
+ !
+ !*** B matrix  for a 3-D hexaedral
+ !    Green Lagrange Strains (TLF)
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(IN) :: nnode
+ REAL (kind=8), INTENT(IN) :: cartd(nnode,3),t(3,3)
+ REAL (kind=8), INTENT(OUT) :: bmat(3,nnode,6)
+ INTEGER (kind=4) :: j
+
+ DO j=1,nnode
+   bmat(1:3,j,1) =  cartd(j,1)*t(1:3,1)
+   bmat(1:3,j,2) =  cartd(j,2)*t(1:3,2)
+   bmat(1:3,j,3) =  cartd(j,3)*t(1:3,3)
+   bmat(1:3,j,4) =  cartd(j,2)*t(1:3,1)+cartd(j,1)*t(1:3,2)
+   bmat(1:3,j,5) =  cartd(j,3)*t(1:3,1)+cartd(j,1)*t(1:3,3)
+   bmat(1:3,j,6) =  cartd(j,3)*t(1:3,2)+cartd(j,2)*t(1:3,3)
+ END DO
+
+ RETURN
+ END SUBROUTINE bmat5

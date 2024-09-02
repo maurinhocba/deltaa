@@ -1,0 +1,47 @@
+ SUBROUTINE bmmt07(ansmm,dfi,b)
+ !***************************************************************************
+ !
+ !*****evaluates B matrix for the ANS membrane part of element 7
+ !
+ !*************************************************************************
+ IMPLICIT NONE
+ ! USE from the module
+ ! nnode: number of nodes in the element
+ ! nasmm: number of Assumed Strain values for Membrane Model
+ ! dn(nnode,2,3) : natural derivatives at vertex nodes (model 1)
+ ! ntan2(nnode,nasmm) : natural shape function derivatives (model 2)
+ !                 routine parameters
+ INTEGER (kind=4), INTENT(IN) :: ansmm    ! ANS Membrane Model
+ REAL (kind=8), INTENT(IN) :: dfi(:,:,:)  !natural derivatives at sampling points
+ REAL (kind=8), INTENT(OUT) :: b(:,:,:)   !B-matrix (ndime,nnode,nasmm)
+ !                 local variables
+ INTEGER (kind=4) i,j,k,n
+
+ IF( ansmm == 1 )THEN        !based on vertex nodes
+
+   k = 1     ! counter of assumed strain values
+   DO i = 1,3 !for each vertex node
+     DO n = 1,nnode  !for each node
+       b(1:3,n,k)   = dfi(1:3,1,i)*dn(n,1,i)     !a_xi_xi
+       b(1:3,n,k+1) = dfi(1:3,2,i)*dn(n,2,i)     !a_eta_esa 
+       b(1:3,n,k+2) = dfi(1:3,1,i)*dn(n,2,i) + dfi(1:3,2,i)*dn(n,1,i)  !2 a_xi_eta
+     END DO
+     k = k+3
+   END DO
+
+ ELSE                        !based on mid-side points at each sub-triangle
+
+   k = 0    ! counter of assumed strain values
+   DO i = 1,3  !for each direction (xi, eta, tt)
+     DO j = 1,3  !for each sampling point
+       k = k+1  !update counter
+       DO n = 1,nnode
+         b(1:3,n,k) = dfi(1:3,j,i)*ntan2(n,k)
+       END DO
+     END DO
+   END DO
+
+ END IF
+
+ RETURN
+ END SUBROUTINE bmmt07

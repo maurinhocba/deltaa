@@ -1,0 +1,49 @@
+ SUBROUTINE load04 (igrav,force,gvect,gravy,heade,coord)
+ !********************************************************************
+ !
+ !***  evaluates gravity load vector for 2-D Solid triangular elements
+ !
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4) :: igrav
+ REAL (kind=8) :: force(:,:),gvect(:),gravy,coord(:,:)
+ TYPE (ele04), POINTER  :: heade
+
+ !        local variable
+
+ INTEGER (kind=4) i,j,n,l,osec
+ REAL (kind=8) weigt,fvect(3)
+ TYPE (ele04), POINTER :: elem
+ TYPE (section), POINTER :: sec
+ LOGICAL :: found
+
+ IF(igrav /= 0) THEN       !if gravity is present
+
+   osec = -1
+   elem => heade           !point to first element
+   DO
+     IF (.NOT.ASSOCIATED (elem) ) EXIT    !all elements processed, Exit loop
+
+     j     = elem%matno                     !associated material
+     IF( j /= osec ) THEN
+       CALL sect_search(j,found,sec)
+       weigt = gravy*sec%mtbas%prope(5)     !density
+       osec = j
+     END IF
+     IF(weigt /= 0.0d0) THEN                !if not zero
+
+       fvect = weigt*gvect(1:3)*elem%dvol/4d0   !force vector at each node
+
+       DO n=1,4                              !for each node (nnode=4)
+         l = elem%lnods(n)                   !node number
+         force(1:3,l) = force(1:3,l) + fvect(1:3) !sum on global force vector
+       END DO
+     END IF
+
+     elem => elem%next                       !point to next element
+   END DO
+ END IF
+
+ RETURN
+ END SUBROUTINE load04

@@ -1,0 +1,71 @@
+ SUBROUTINE gaus04(heade,coord,istop,coora,gauss,plstr,angdf)
+ !-------------------------------------------------------------------
+ !--- evaluates gauss points constants for solid element 04
+ !--------------------------------------------------------------------
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(OUT) :: istop
+ REAL (kind=8), INTENT(IN) :: coord(:,:), & !initial coordinates
+                              coora(:,:), & !present coordinates
+                              angdf(:)      !default angles Gl_X - Ort_Axes
+ TYPE (ele04), POINTER :: heade   !pointer to first element in the set
+ LOGICAL, INTENT (IN OUT) :: gauss    !TRUE if initial constant exists
+ INTEGER (kind=4), INTENT(IN OUT) :: plstr  !/= 0 if plastic strains required
+
+ INTEGER (kind=4) i,m,n
+ REAL (kind=8) x(3,8),t(3,3),r(3,3)
+ REAL (kind=8) :: ang(3),factor,rm(3,3),jac,lb(3,3)
+ TYPE (ele04), POINTER :: e
+ LOGICAL :: faces(4)
+
+ INTERFACE
+   INCLUDE 'lgst18.h'
+ END INTERFACE
+ !     ---------------------------------------------------------
+ factor = ATAN(1d0)/45d0         !pi/180
+ ang = angdf*factor
+ CALL inrotm(ang(1),rm(1,1))
+
+ e => heade       !point to first element
+ DO               !loop over the elements in the set
+   IF (.NOT.ASSOCIATED (e) ) EXIT  !if all element processed, exit
+   x(:,1:4) = coord(:,e%lnods(1:4))
+   DO i =5,8                       !for all nodes in the patch
+     n = e%lnods(i)                !node number
+     m = i-4                       !associated face element
+     IF(n /= 0) THEN               !if node exist
+       x(:,i) = coord(:,n)         !get original coordinates
+       faces(m) = .TRUE.           !face element exists
+     ELSE
+       faces(m) = .FALSE.          !face element does not exists
+       x(:,i) = 0d0
+     END IF
+   END DO
+
+   IF(.NOT.gauss)THEN    !Compute initial constants if requested
+     ! compute element local systems, cartesyan derivatives and element volume
+     IF( ANY(e%angle /= 0d0))THEN
+       ang = e%angle*factor
+       CALL inrotm(ang(1),lb(1,1))
+       lb = MATMUL(rm,lb)
+     ELSE
+       lb = rm
+     END IF
+     ! compute volume factors
+     CALL axep04(x,e%cd,e%dvol,faces,lb,e%facs)
+
+     IF( e%dvol <= 0d0 ) THEN         !check that volume is possitive
+       WRITE(*,1000)e%numel,e%dvol
+       istop = 1
+     END IF
+
+   END IF
+   e => e%next          !point to next element
+ END DO
+ gauss = .TRUE.
+ plstr = 0
+ 1000 FORMAT(' NEGATIVE OR NUL JACOBIAN AT 3-D TETRAHEDRA(04) ',I5,/ &
+        ' JACOBIAN = ', E12.4 )
+
+ RETURN
+ END SUBROUTINE gaus04

@@ -1,0 +1,370 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<VisualStudioProject ProjectCreator="Intel Fortran" Keyword="Console Application" Version="11.0" ProjectIdGuid="{1C5D56EF-CDCE-4E44-B262-652F0AAD8311}">
+	<Platforms>
+		<Platform Name="Win32"/>
+		<Platform Name="x64"/></Platforms>
+	<Configurations>
+		<Configuration Name="Debug|Win32">
+				<Tool Name="VFFortranCompilerTool" SuppressStartupBanner="true" DebugInformationFormat="debugEnabled" Optimization="optimizeDisabled" AdditionalIncludeDirectories="..\inclu" PreprocessorDefinitions="GMNME=1;acad=0" OpenMPConditionalCompilation="false" SourceFileFormat="fileFormatFree" WarnUnusedVariables="true" RealKIND="realKIND8" CommonElementAlignment="alignCommonEightBytes" AlignSEQUENCE="true" FloatingPointExceptionHandling="fpe0" CallingConvention="callConventionCVF" Traceback="true" BoundsCheck="true" RuntimeLibrary="rtMultiThreadedDebug"/>
+				<Tool Name="VFLinkerTool" OutputFile="c:/uti/delta1d.exe" LinkIncremental="linkIncrementalNo" SuppressStartupBanner="true" AdditionalLibraryDirectories="..\library" GenerateDebugInformation="true" SubSystem="subSystemConsole" AdditionalDependencies="kernel32.lib"/>
+				<Tool Name="VFResourceCompilerTool" PreprocessorDefinitions="_DEBUG" Culture="rcEnglishUS"/>
+				<Tool Name="VFMidlTool" SuppressStartupBanner="true"/>
+				<Tool Name="VFCustomBuildTool"/>
+				<Tool Name="VFPreLinkEventTool"/>
+				<Tool Name="VFPreBuildEventTool"/>
+				<Tool Name="VFPostBuildEventTool"/>
+				<Tool Name="VFManifestTool" SuppressStartupBanner="true"/></Configuration>
+		<Configuration Name="Release|Win32">
+				<Tool Name="VFFortranCompilerTool" SuppressStartupBanner="true" AdditionalIncludeDirectories="..\inclu" PreprocessorDefinitions="GMNME=1;acad=0" OpenMPConditionalCompilation="false" SourceFileFormat="fileFormatFree" WarnUnusedVariables="true" RealKIND="realKIND8" CommonElementAlignment="alignCommonEightBytes" AlignSEQUENCE="true" CallingConvention="callConventionCVF"/>
+				<Tool Name="VFLinkerTool" OutputFile="c:/uti/delta1.exe" LinkIncremental="linkIncrementalNo" SuppressStartupBanner="true" AdditionalLibraryDirectories="..\library" SubSystem="subSystemConsole" AdditionalDependencies="kernel32.lib"/>
+				<Tool Name="VFResourceCompilerTool" PreprocessorDefinitions="NDEBUG" Culture="rcEnglishUS"/>
+				<Tool Name="VFMidlTool" SuppressStartupBanner="true"/>
+				<Tool Name="VFCustomBuildTool"/>
+				<Tool Name="VFPreLinkEventTool"/>
+				<Tool Name="VFPreBuildEventTool"/>
+				<Tool Name="VFPostBuildEventTool"/>
+				<Tool Name="VFManifestTool" SuppressStartupBanner="true"/></Configuration>
+		<Configuration Name="release64|Win32">
+				<Tool Name="VFFortranCompilerTool" SuppressStartupBanner="true" AdditionalIncludeDirectories="..\inclu" PreprocessorDefinitions="GMNME=1;acad=0" OpenMPConditionalCompilation="false" SourceFileFormat="fileFormatFree" WarnUnusedVariables="true" RealKIND="realKIND8" CommonElementAlignment="alignCommonEightBytes" AlignSEQUENCE="true" CallingConvention="callConventionCVF"/>
+				<Tool Name="VFLinkerTool" OutputFile="c:/uti/delta1.exe" LinkIncremental="linkIncrementalNo" SuppressStartupBanner="true" AdditionalLibraryDirectories="..\library" SubSystem="subSystemConsole" AdditionalDependencies="kernel32.lib"/>
+				<Tool Name="VFResourceCompilerTool" PreprocessorDefinitions="NDEBUG" Culture="rcEnglishUS"/>
+				<Tool Name="VFMidlTool" SuppressStartupBanner="true"/>
+				<Tool Name="VFCustomBuildTool"/>
+				<Tool Name="VFPreLinkEventTool"/>
+				<Tool Name="VFPreBuildEventTool"/>
+				<Tool Name="VFPostBuildEventTool"/>
+				<Tool Name="VFManifestTool" SuppressStartupBanner="true"/></Configuration>
+		<Configuration Name="Debug|x64">
+				<Tool Name="VFFortranCompilerTool" SuppressStartupBanner="true" DebugInformationFormat="debugEnabled" Optimization="optimizeDisabled" AdditionalIncludeDirectories="..\inclu" PreprocessorDefinitions="GMNME=1;acad=0" OpenMPConditionalCompilation="false" SourceFileFormat="fileFormatFree" WarnUnusedVariables="true" RealKIND="realKIND8" CommonElementAlignment="alignCommonEightBytes" AlignSEQUENCE="true" FloatingPointExceptionHandling="fpe0" CallingConvention="callConventionCVF" Traceback="true" BoundsCheck="true" RuntimeLibrary="rtMultiThreadedDebug"/>
+				<Tool Name="VFLinkerTool" OutputFile="c:\uti\delta1d.exe" LinkIncremental="linkIncrementalNo" SuppressStartupBanner="true" AdditionalLibraryDirectories="..\library" GenerateDebugInformation="true" SubSystem="subSystemConsole" AdditionalDependencies="kernel32.lib"/>
+				<Tool Name="VFResourceCompilerTool" PreprocessorDefinitions="_DEBUG" Culture="rcEnglishUS"/>
+				<Tool Name="VFMidlTool" SuppressStartupBanner="true" TargetEnvironment="midlTargetAMD64"/>
+				<Tool Name="VFCustomBuildTool"/>
+				<Tool Name="VFPreLinkEventTool"/>
+				<Tool Name="VFPreBuildEventTool"/>
+				<Tool Name="VFPostBuildEventTool"/>
+				<Tool Name="VFManifestTool" SuppressStartupBanner="true"/></Configuration>
+		<Configuration Name="Release|x64">
+				<Tool Name="VFFortranCompilerTool" SuppressStartupBanner="true" AdditionalIncludeDirectories="..\inclu" PreprocessorDefinitions="GMNME=1;acad=0" OpenMPConditionalCompilation="false" SourceFileFormat="fileFormatFree" WarnUnusedVariables="true" RealKIND="realKIND8" CommonElementAlignment="alignCommonEightBytes" AlignSEQUENCE="true" CallingConvention="callConventionCVF"/>
+				<Tool Name="VFLinkerTool" OutputFile="c:/uti/delta1.exe" LinkIncremental="linkIncrementalNo" SuppressStartupBanner="true" AdditionalLibraryDirectories="..\library" SubSystem="subSystemConsole" AdditionalDependencies="kernel32.lib"/>
+				<Tool Name="VFResourceCompilerTool" PreprocessorDefinitions="NDEBUG" Culture="rcEnglishUS"/>
+				<Tool Name="VFMidlTool" SuppressStartupBanner="true" TargetEnvironment="midlTargetAMD64"/>
+				<Tool Name="VFCustomBuildTool"/>
+				<Tool Name="VFPreLinkEventTool"/>
+				<Tool Name="VFPreBuildEventTool"/>
+				<Tool Name="VFPostBuildEventTool"/>
+				<Tool Name="VFManifestTool" SuppressStartupBanner="true"/></Configuration>
+		<Configuration Name="release64|x64">
+				<Tool Name="VFFortranCompilerTool" SuppressStartupBanner="true" AdditionalIncludeDirectories="..\inclu" PreprocessorDefinitions="GMNME=1;acad=0" OpenMPConditionalCompilation="false" SourceFileFormat="fileFormatFree" WarnUnusedVariables="true" RealKIND="realKIND8" CommonElementAlignment="alignCommonEightBytes" AlignSEQUENCE="true" CallingConvention="callConventionCVF"/>
+				<Tool Name="VFLinkerTool" OutputFile="c:/uti/delta64.exe" LinkIncremental="linkIncrementalNo" SuppressStartupBanner="true" AdditionalLibraryDirectories="..\library" SubSystem="subSystemConsole" AdditionalDependencies="kernel32.lib"/>
+				<Tool Name="VFResourceCompilerTool" PreprocessorDefinitions="NDEBUG" Culture="rcEnglishUS"/>
+				<Tool Name="VFMidlTool" SuppressStartupBanner="true" TargetEnvironment="midlTargetAMD64"/>
+				<Tool Name="VFCustomBuildTool"/>
+				<Tool Name="VFPreLinkEventTool"/>
+				<Tool Name="VFPreBuildEventTool"/>
+				<Tool Name="VFPostBuildEventTool"/>
+				<Tool Name="VFManifestTool" SuppressStartupBanner="true"/></Configuration></Configurations>
+	<Files>
+		<Filter Name="Header Files" Filter="fi;fd"/>
+		<Filter Name="Resource Files" Filter="rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe"/>
+		<Filter Name="Source Files" Filter="f90;for;f;fpp;ftn;def;odl;idl">
+		<File RelativePath="..\MAINP\actcd.f90"/>
+		<File RelativePath="..\MAINP\actrot.f90"/>
+		<File RelativePath="..\MAINP\actual.f90"/>
+		<File RelativePath="..\auxil\addlhs.f90"/>
+		<File RelativePath="..\SHELQ\angeul.f90"/>
+		<File RelativePath="..\loads\aplfol.f90"/>
+		<File RelativePath="..\MAINP\arisfi.f90"/>
+		<File RelativePath="..\MAINP\arisi0.f90"/>
+		<File RelativePath="..\MAINP\arisin.f90"/>
+		<File RelativePath="..\auxil\b0dbpr.f90"/>
+		<File RelativePath="..\MAINP\beginp.f90"/>
+		<File RelativePath="..\auxil\btdbpr.f90"/>
+		<File RelativePath="..\auxil\btdbpr1.f90"/>
+		<File RelativePath="..\MAINP\byebye.f90"/>
+		<File RelativePath="..\input\c_input.f90"/>
+		<File RelativePath="..\mainp\ch_d2v.f90"/>
+		<File RelativePath="..\auxil\check_orientation8.f90"/>
+		<File RelativePath="..\MAINP\chnode.f90"/>
+		<File RelativePath="..\MAINP\cms_db.f90"/>
+		<File RelativePath="..\SOLVE\colsol.f90"/>
+		<File RelativePath="..\auxil\compare_faces.f90"/>
+		<File RelativePath="..\MAINP\conini.f90"/>
+		<File RelativePath="..\MAINP\contac.f90"/>
+		<File RelativePath="..\MAINP\contol.f90"/>
+		<File RelativePath="..\MAINP\coract.f90"/>
+		<File RelativePath="..\matdb\core06ps.f90"/>
+		<File RelativePath="..\matdb\corr05.f90"/>
+		<File RelativePath="..\matdb\corr17.f90"/>
+		<File RelativePath="..\matdb\corr18.f90"/>
+		<File RelativePath="..\matdb\corr20.f90"/>
+		<File RelativePath="..\matdb\corr20_a.f90"/>
+		<File RelativePath="..\matdb\corr20_i.f90"/>
+		<File RelativePath="..\MAINP\ctrl_db.f90"/>
+		<File RelativePath="..\beame\cuate8.f90"/>
+		<File RelativePath="..\MAINP\curv_db.f90"/>
+		<File RelativePath="..\loads\dedge0.f90"/>
+		<File RelativePath="..\loads\dedge1.f90"/>
+		<File RelativePath="..\input\defnam.f90"/>
+		<File RelativePath="..\SHELQ\deriv6.f90"/>
+		<File RelativePath="..\shelq\dmat06.f90"/>
+		<File RelativePath="..\matdb\dmat14.f90"/>
+		<File RelativePath="..\SHELQ\dmatx6.f90"/>
+		<File RelativePath="..\loads\dsurf0.f90"/>
+		<File RelativePath="..\loads\dsurf1.f90"/>
+		<File RelativePath="..\MAINP\dumpin.f90"/>
+		<File RelativePath="..\MAINP\dyna_db.f90"/>
+		<File RelativePath="..\mainp\dynast.f90"/>
+		<File RelativePath="..\spot\ele01_db.f90"/>
+		<File RelativePath="..\TRUSS\ele02_db.f90"/>
+		<File RelativePath="..\TLLL\ele03_db.f90"/>
+		<File RelativePath="..\ssolag\ele04_db.f90"/>
+		<File RelativePath="..\sprism\ele05_db.f90"/>
+		<File RelativePath="..\SHELQ\ele06_db.f90"/>
+		<File RelativePath="..\tshel\ele07_db.f90"/>
+		<File RelativePath="..\beame\ele08_db.f90"/>
+		<File RelativePath="..\SHREV\ele09_db.f90"/>
+		<File RelativePath="..\rigid\ele10_db.f90"/>
+		<File RelativePath="..\beam2\ele11_db.f90"/>
+		<File RelativePath="..\solsh\ele12_db.f90"/>
+		<File RelativePath="..\nbst\ele13_db.f90"/>
+		<File RelativePath="..\lbst\ele14_db.f90"/>
+		<File RelativePath="..\rbst\ele15_db.f90"/>
+		<File RelativePath="..\prism\ele16_db.f90"/>
+		<File RelativePath="..\quadl\ele17_db.f90"/>
+		<File RelativePath="..\solag\ele18_db.f90"/>
+		<File RelativePath="..\btrian\ele19_db.f90"/>
+		<File RelativePath="..\tr2d\ele20_db.f90"/>
+		<File RelativePath="..\tlbst\ele24_db.f90"/>
+		<File RelativePath="..\bsq\ele25_db.f90"/>
+		<File RelativePath="..\bsolag\ele26_db.f90"/>
+		<File RelativePath="..\Bprism\ele27_db.f90"/>
+		<File RelativePath="..\qprism\ele29_db.f90"/>
+		<File RelativePath="..\bbst\ele30_db.f90"/>
+		<File RelativePath="..\TLLL\elem03.f90"/>
+		<File RelativePath="..\ssolag\elem04.f90"/>
+		<File RelativePath="..\sprism\elem05.f90"/>
+		<File RelativePath="..\rigid\elem10.f90"/>
+		<File RelativePath="..\beam2\elem11.f90"/>
+		<File RelativePath="..\solsh\elem12.f90"/>
+		<File RelativePath="..\nbst\elem13.f90"/>
+		<File RelativePath="..\lbst\elem14.f90"/>
+		<File RelativePath="..\rbst\elem15.f90"/>
+		<File RelativePath="..\prism\elem16.f90"/>
+		<File RelativePath="..\quadl\elem17.f90"/>
+		<File RelativePath="..\solag\elem18.f90"/>
+		<File RelativePath="..\btrian\elem19.f90"/>
+		<File RelativePath="..\tr2d\elem20.f90"/>
+		<File RelativePath="..\tlbst\elem24.f90"/>
+		<File RelativePath="..\bsq\Elem25.f90"/>
+		<File RelativePath="..\bsolag\elem26.f90"/>
+		<File RelativePath="..\Bprism\elem27.f90"/>
+		<File RelativePath="..\qprism\elem29.f90"/>
+		<File RelativePath="..\bbst\elem30.f90"/>
+		<File RelativePath="..\MAINP\Elemnt.f90"/>
+		<File RelativePath="..\spot\Elemt1.f90"/>
+		<File RelativePath="..\TRUSS\Elemt2.f90"/>
+		<File RelativePath="..\SHELQ\elemt6.f90"/>
+		<File RelativePath="..\tshel\elemt7.f90"/>
+		<File RelativePath="..\beame\elemt8.f90"/>
+		<File RelativePath="..\SHREV\Elemt9.f90"/>
+		<File RelativePath="..\MAINP\elmdat.f90"/>
+		<File RelativePath="..\SHELQ\elpmo6.f90"/>
+		<File RelativePath="..\SHELQ\elpms6.f90"/>
+		<File RelativePath="..\MAINP\endstr.f90"/>
+		<File RelativePath="..\auxil\Ensmal.f90"/>
+		<File RelativePath="..\auxil\ensmat.f90"/>
+		<File RelativePath="..\auxil\ensmatN.f90"/>
+		<File RelativePath="..\auxil\ensve1.f90"/>
+		<File RelativePath="..\auxil\Ensvec.f90"/>
+		<File RelativePath="..\MAINP\Eqnums.f90"/>
+		<File RelativePath="..\MAINP\esets_db.f90"/>
+		<File RelativePath="..\MAINP\export_db.f90"/>
+		<File RelativePath="..\beame\expot8.f90"/>
+		<File RelativePath="..\mainp\extend.f90"/>
+		<File RelativePath="..\mainp\fixdpd.f90"/>
+		<File RelativePath="..\mainp\fixsld.f90"/>
+		<File RelativePath="..\therm\fixtem.f90"/>
+		<File RelativePath="..\MAINP\fixva0.f90"/>
+		<File RelativePath="..\mainp\fixval.f90"/>
+		<File RelativePath="..\loads\folost.f90"/>
+		<File RelativePath="..\MAINP\Functs.f90"/>
+		<File RelativePath="..\auxil\gaussq.f90"/>
+		<File RelativePath="..\lbst\gentbs.f90"/>
+		<File RelativePath="..\MAINP\gvar_db.f90"/>
+		<File RelativePath="..\MAINP\histor.f90"/>
+		<File RelativePath="..\loads\hydf_db.f90"/>
+		<File RelativePath="..\therm\ift_db.f90"/>
+		<File RelativePath="..\MAINP\ifx_db.f90"/>
+		<File RelativePath="..\MAINP\imcoor.f90"/>
+		<File RelativePath="..\MAINP\immtsc.f90"/>
+		<File RelativePath="..\MAINP\impfix.f90"/>
+		<File RelativePath="..\MAINP\import.f90"/>
+		<File RelativePath="..\mainp\inisld.f90"/>
+		<File RelativePath="..\TLLL\inpd03.f90"/>
+		<File RelativePath="..\ssolag\Inpd04.f90"/>
+		<File RelativePath="..\sprism\Inpd05.f90"/>
+		<File RelativePath="..\rigid\inpd10.f90"/>
+		<File RelativePath="..\beam2\Inpd11.f90"/>
+		<File RelativePath="..\solsh\Inpd12.f90"/>
+		<File RelativePath="..\nbst\INPD13.f90"/>
+		<File RelativePath="..\lbst\INPD14.f90"/>
+		<File RelativePath="..\rbst\INPD15.f90"/>
+		<File RelativePath="..\prism\Inpd16.f90"/>
+		<File RelativePath="..\quadl\Inpd17.f90"/>
+		<File RelativePath="..\solag\Inpd18.f90"/>
+		<File RelativePath="..\btrian\inpd19.f90"/>
+		<File RelativePath="..\tr2d\Inpd20.f90"/>
+		<File RelativePath="..\tlbst\inpd24.f90"/>
+		<File RelativePath="..\bsq\INPD25.f90"/>
+		<File RelativePath="..\bsolag\inpd26.f90"/>
+		<File RelativePath="..\Bprism\Inpd27.f90"/>
+		<File RelativePath="..\qprism\Inpd29.f90"/>
+		<File RelativePath="..\bbst\inpd30.f90"/>
+		<File RelativePath="..\spot\Inpda1.f90"/>
+		<File RelativePath="..\TRUSS\Inpda2.f90"/>
+		<File RelativePath="..\SHELQ\inpda6.f90"/>
+		<File RelativePath="..\tshel\inpda7.f90"/>
+		<File RelativePath="..\beame\inpda8.f90"/>
+		<File RelativePath="..\SHREV\Inpda9.f90"/>
+		<File RelativePath="..\MAINP\Inpdat.f90"/>
+		<File RelativePath="..\MAINP\INROTM.F90"/>
+		<File RelativePath="..\MAINP\Intime.f90"/>
+		<File RelativePath="..\MAINP\inttoch.f90"/>
+		<File RelativePath="..\auxil\INVEAS.F90"/>
+		<File RelativePath="..\auxil\Invecz.f90"/>
+		<File RelativePath="..\auxil\INVMTX.F90"/>
+		<File RelativePath="..\matdb\isoha14.f90"/>
+		<File RelativePath="..\SHELQ\istgp6.f90"/>
+		<File RelativePath="..\SOLVE\Iteinv.f90"/>
+		<File RelativePath="..\MAINP\Iterat.f90"/>
+		<File RelativePath="..\SHELQ\j2auxi.f90"/>
+		<File RelativePath="..\SHREV\j2smt9.f90"/>
+		<File RelativePath="..\SHREV\j2sst9.f90"/>
+		<File RelativePath="..\auxil\Jacob3.f90"/>
+		<File RelativePath="..\auxil\Jacob5.f90"/>
+		<File RelativePath="..\MAINP\Kinc_db.f90"/>
+		<File RelativePath="..\SHELQ\lcasy6.f90"/>
+		<File RelativePath="..\lbst\LGST14.f90"/>
+		<File RelativePath="..\MAINP\line_db.f90"/>
+		<File RelativePath="..\input\LISPA0.F90"/>
+		<File RelativePath="..\loads\loa_db.f90"/>
+		<File RelativePath="..\loads\loadfl.f90"/>
+		<File RelativePath="..\loads\Loadpl.f90"/>
+		<File RelativePath="..\loads\loadst.f90"/>
+		<File RelativePath="..\loads\Loaini.f90"/>
+		<File RelativePath="..\MAINP\mainpg.f90"/>
+		<File RelativePath="..\MAINP\Masmtx.f90"/>
+		<File RelativePath="..\matdb\mat_dba.f90"/>
+		<File RelativePath="..\solag\modp18.f90"/>
+		<File RelativePath="..\matdb\modp20.f90"/>
+		<File RelativePath="..\SHELQ\modps6.f90"/>
+		<File RelativePath="..\SHELQ\modul6.f90"/>
+		<File RelativePath="..\auxil\MULMAT.F90"/>
+		<File RelativePath="..\auxil\mulmatu.f90"/>
+		<File RelativePath="..\MAINP\name_db.f90"/>
+		<File RelativePath="..\MAINP\nar_db.f90"/>
+		<File RelativePath="..\MAINP\ndinf_db.f90"/>
+		<File RelativePath="..\MAINP\ndp_db.f90"/>
+		<File RelativePath="..\MAINP\nes_db.f90"/>
+		<File RelativePath="..\MAINP\newprb.f90"/>
+		<File RelativePath="..\TLLL\nodn03.f90"/>
+		<File RelativePath="..\SHELQ\nodnor.f90"/>
+		<File RelativePath="..\SHELQ\norelm.f90"/>
+		<File RelativePath="..\MAINP\npo_db.f90"/>
+		<File RelativePath="..\MAINP\nsets_db.f90"/>
+		<File RelativePath="..\mainp\nsld_db.f90"/>
+		<File RelativePath="..\auxil\Number.f90"/>
+		<File RelativePath="..\SOLVE\Outbuc.f90"/>
+		<File RelativePath="..\MAINP\Outp_db.f90"/>
+		<File RelativePath="..\MAINP\Output.f90"/>
+		<File RelativePath="..\MAINP\param_db.f90"/>
+		<File RelativePath="..\matdb\posin1.f90"/>
+		<File RelativePath="..\SOLVE\Predic.f90"/>
+		<File RelativePath="..\auxil\princi.f90"/>
+		<File RelativePath="..\lbst\projq4.f90"/>
+		<File RelativePath="..\auxil\Proma1.f90"/>
+		<File RelativePath="..\auxil\Proma2.f90"/>
+		<File RelativePath="..\auxil\Proma3.f90"/>
+		<File RelativePath="..\auxil\Proma4.f90"/>
+		<File RelativePath="..\auxil\Provec.f90"/>
+		<File RelativePath="..\loads\pyrmd4.f90"/>
+		<File RelativePath="..\SHELQ\radre6.f90"/>
+		<File RelativePath="..\MAINP\rdconm.f90"/>
+		<File RelativePath="..\MAINP\rdcoor.f90"/>
+		<File RelativePath="..\MAINP\rdcurv.f90"/>
+		<File RelativePath="..\loads\rdfoll.f90"/>
+		<File RelativePath="..\loads\rdhyd2d.f90"/>
+		<File RelativePath="..\loads\rdload.f90"/>
+		<File RelativePath="..\therm\rdpret.f90"/>
+		<File RelativePath="..\loads\rdsegs.f90"/>
+		<File RelativePath="..\mainp\rdsldn.f90"/>
+		<File RelativePath="..\therm\rdtemp.f90"/>
+		<File RelativePath="..\MAINP\rdvel0.f90"/>
+		<File RelativePath="..\MAINP\RDVELR.F90"/>
+		<File RelativePath="..\MAINP\rdvels.f90"/>
+		<File RelativePath="..\MAINP\readp0.f90"/>
+		<File RelativePath="..\MAINP\READPD.F90"/>
+		<File RelativePath="..\MAINP\reasdf.f90"/>
+		<File RelativePath="..\SOLVE\Renum0.f90"/>
+		<File RelativePath="..\SOLVE\RENUM1.F90"/>
+		<File RelativePath="..\SOLVE\Renum2.f90"/>
+		<File RelativePath="..\SOLVE\RENUM3.F90"/>
+		<File RelativePath="..\SOLVE\Renum4.f90"/>
+		<File RelativePath="..\SOLVE\Renumn.f90"/>
+		<File RelativePath="..\MAINP\Restar.f90"/>
+		<File RelativePath="..\MAINP\Resvpl.f90"/>
+		<File RelativePath="..\rigid\rigbdc.f90"/>
+		<File RelativePath="..\matdb\rubber1d.f90"/>
+		<File RelativePath="..\matdb\rubber2d.f90"/>
+		<File RelativePath="..\matdb\rubberps.f90"/>
+		<File RelativePath="..\input\runen23.f90"/>
+		<File RelativePath="..\MAINP\rve_db.f90"/>
+		<File RelativePath="..\SHELQ\scater.f90"/>
+		<File RelativePath="..\MAINP\SCREIN.F90"/>
+		<File RelativePath="..\auxil\shape1.f90"/>
+		<File RelativePath="..\SHELQ\shape2.f90"/>
+		<File RelativePath="..\auxil\Shape3.f90"/>
+		<File RelativePath="..\auxil\shape4.f90"/>
+		<File RelativePath="..\auxil\Shape5.f90"/>
+		<File RelativePath="..\shelt\shape7.f90"/>
+		<File RelativePath="..\auxil\shape9.f90"/>
+		<File RelativePath="..\SHELQ\slayer.f90"/>
+		<File RelativePath="..\auxil\solsys.f90"/>
+		<File RelativePath="..\mainp\solv_db.f90"/>
+		<File RelativePath="..\auxil\sortnd.f90"/>
+		<File RelativePath="..\solve\sspace.for"/>
+		<File RelativePath="..\shelq\stgp06.f90"/>
+		<File RelativePath="..\auxil\stiaux.f90"/>
+		<File RelativePath="..\auxil\stiaux_NS.f90"/>
+		<File RelativePath="..\auxil\stiaux_sp.f90"/>
+		<File RelativePath="..\auxil\stiaux_ss.f90"/>
+		<File RelativePath="..\auxil\stiaux_ss_NS.f90"/>
+		<File RelativePath="..\auxil\stiaux_tlll.f90"/>
+		<File RelativePath="..\auxil\stiauxt.f90"/>
+		<File RelativePath="..\MAINP\Stiffm.f90"/>
+		<File RelativePath="..\TRUSS\Stre02_1.f90"/>
+		<File RelativePath="..\TRUSS\stre02_6.f90"/>
+		<File RelativePath="..\matdb\stre14.f90"/>
+		<File RelativePath="..\auxil\surf03.f90"/>
+		<File RelativePath="..\auxil\surf05.f90"/>
+		<File RelativePath="..\MAINP\surf_db.f90"/>
+		<File RelativePath="..\loads\tetr.f90"/>
+		<File RelativePath="..\MAINP\timing.f90"/>
+		<File RelativePath="..\MAINP\Timuse.f90"/>
+		<File RelativePath="..\SOLVE\Ubicmx.f90"/>
+		<File RelativePath="..\matdb\ud_corr_30.f90"/>
+		<File RelativePath="..\matdb\ud_sh2_out.f90"/>
+		<File RelativePath="..\matdb\ud_shell_2.f90"/>
+		<File RelativePath="..\SOLVE\Update.f90"/>
+		<File RelativePath="..\auxil\Vecasi.f90"/>
+		<File RelativePath="..\auxil\vecdot.f90"/>
+		<File RelativePath="..\auxil\Vecpro.f90"/>
+		<File RelativePath="..\auxil\Vecuni.f90"/>
+		<File RelativePath="..\mainp\velnpo.f90"/>
+		<File RelativePath="..\matdb\visco20.f90"/>
+		<File RelativePath="..\loads\vol2d.f90"/>
+		<File RelativePath="..\loads\wrtfl0.f90"/>
+		<File RelativePath="..\loads\wrtfl1.f90"/>
+		<File RelativePath="..\MAINP\Wrtpos.f90"/></Filter></Files>
+	<Globals/></VisualStudioProject>

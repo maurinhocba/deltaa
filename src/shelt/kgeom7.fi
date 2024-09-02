@@ -1,0 +1,94 @@
+ SUBROUTINE kgeom7(nnode,ndofe,stype,cartd,romtx,t,dx,sgtot,estif)
+ !******************************************************************************
+ !
+ !*****this routine compute the geometric part of the tangent stiffness
+ !                    for element 7
+ !     contribution from shear is missing (stype = 1 only)
+ !******************************************************************************
+ IMPLICIT NONE
+ !                        routine parameters
+
+ INTEGER (kind=4), INTENT(IN) :: nnode,ndofe,stype
+
+ REAL (kind=8), INTENT(IN) :: cartd(:,:),romtx(:,:,:),t(:,:),dx(:,:),sgtot(:)
+ REAL (kind=8), INTENT(IN OUT) :: estif(:)
+
+ !                        local variables
+
+ INTEGER (kind=4) j,l,ni,nj,idof,jdof,poses
+
+ REAL (kind=8) coef1,coef2,ckgeo
+
+ !                   local functions
+
+ INTEGER (kind=4) poesti             !position i,j in estif(nxn)
+ poesti(ni,nj) = (60-ni)*(ni-1)/2 + nj
+
+ !influence of membrane stresses
+
+ IF (stype < 2 ) THEN
+   DO ni = 1,nnode                                       ! node i
+     idof = (ni-1)*ndofe
+     !                                           [ n11  n12 ]
+     !   [coef1,coef2] = [d(n(i)/dx,d(n(i)/dy] * [ n21  n22 ]
+
+     coef1 = sgtot(1)*cartd(ni,1) + sgtot(3)*cartd(ni,2)
+     coef2 = sgtot(3)*cartd(ni,1) + sgtot(2)*cartd(ni,2)
+     !  for every node greater or equal than ni
+     DO nj = ni,nnode                                    ! node j
+       jdof = (nj-1)*ndofe
+       !  ckgeo = [coef1,coef2] . [d(n(j)/dx,d(n(j)/dy]
+       ckgeo = coef1*cartd(nj,1) + coef2*cartd(nj,2)
+       DO j=1,3 !ndime
+         poses = poesti(idof+j,jdof+j)           ! diagonals,
+         estif(poses) = estif(poses) + ckgeo
+       END DO
+     END DO                                            ! nj
+   END DO                                              ! ni
+ END IF
+
+ !     influence of bending stresses
+
+ DO ni = 1,nnode                                         !  node i
+   idof = (ni-1)*ndofe
+   !      ni   with   ni
+   coef1 = sgtot(4)*cartd(ni,1) + sgtot(6)*cartd(ni,2)
+   coef2 = sgtot(6)*cartd(ni,1) + sgtot(5)*cartd(ni,2)
+   ckgeo = - DOT_PRODUCT(t(1:3,ni),dx(1:3,1))*coef1 &
+&          - DOT_PRODUCT(t(1:3,ni),dx(1:3,2))*coef2
+   !      delta t(i)  with  delta t(i)
+   DO l = 4,5
+     poses = poesti(idof+l,idof+l)
+     estif(poses) = estif(poses) + ckgeo
+   END DO
+   !      delta u(i)  with  delta t(i)
+   ckgeo = coef1*cartd(ni,1) + coef2*cartd(ni,2)
+   DO j = 1,3 !ndime
+     poses = poesti(idof+j,idof+4)
+     estif(poses) = estif(poses) - ckgeo*romtx(j,2,ni)
+     poses = poses + 1
+     estif(poses) = estif(poses) + ckgeo*romtx(j,1,ni)
+   END DO
+   !      ni  with  nj    ni <> nj
+   DO nj = ni+1,nnode
+     jdof = (nj-1)*ndofe
+
+     ckgeo = coef1*cartd(nj,1) + coef2*cartd(nj,2)
+
+     DO j = 1,3 !ndime
+       !  over the submatrix diagonal  delta u(i)   with   delta t(j)
+       poses = poesti(idof+j,jdof+4)
+       estif(poses) = estif(poses) - ckgeo*romtx(j,2,nj)
+       poses = poses + 1
+       estif(poses) = estif(poses) + ckgeo*romtx(j,1,nj)
+       !  under the submatrix diagonal  delta t(i)   with   delta u(j)
+       poses = poesti(idof+4,jdof+j)
+       estif(poses) = estif(poses) - ckgeo*romtx(j,2,ni)
+       poses = poesti(idof+5,jdof+j)
+       estif(poses) = estif(poses) + ckgeo*romtx(j,1,ni)
+     END DO
+   END DO                                              ! nj
+ END DO                                                ! ni
+ RETURN
+
+ END SUBROUTINE kgeom7

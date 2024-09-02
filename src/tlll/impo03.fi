@@ -1,0 +1,113 @@
+ SUBROUTINE impo03 (nelem, heade, taile, nnode)
+ !******************************************************************
+ !
+ !*** READ element DATA for shell elements TLLL
+ !
+ !******************************************************************
+ USE gvar_db
+ USE ctrl_db, ONLY : echo_chnode
+ IMPLICIT NONE
+
+ INTEGER (kind=4), PARAMETER :: nstre=8
+ INTEGER (kind=4) :: nelem,nnode
+ TYPE(ele03),POINTER:: heade,taile
+
+ LOGICAL  found !,dummy
+ INTEGER (kind=4) :: i,j,k,l,iel,chnode,isec,nlayr,osec,jsec,ln(nnode),stype
+ REAL (kind=8) :: angle
+ TYPE (ele03), POINTER :: e
+ TYPE(section), POINTER :: sec
+
+ !
+ ! *** READ the element nodal connections, and the property numbers.
+ !
+ osec = -1
+ iel = 0
+ echo_chnode = .FALSE.
+ IF( overw ) e => heade
+ DO iel=1,nelem
+   ! loop over elements
+   IF( overw )THEN
+     READ (fimpo)i,j,ln,angle
+     IF( i /= e%numel )WRITE(55,"(' import set element label changed from ', &
+          &                         i6,' to ',i6)")e%numel,i
+     !  section must be modified
+     isec = e%matno                 !associated material
+     IF( isec /= osec )  sec => psecs(isec)%p  !point to new section
+   ELSE
+     ALLOCATE (e)           !reserve memory for data
+     ALLOCATE (e%lnods(nnode))
+     READ (fimpo) e%numel,e%matno,e%lnods(1:nnode),e%angle
+     ! modify nodes
+     IF (renum)THEN
+       IF( seque )THEN
+         DO j=1,nnode
+           k = e%lnods(j)
+           IF( k == 0 )CYCLE
+           DO l=1,numpo
+             IF( k == nodset(l) )THEN
+               e%lnods(j) = lab1 + l
+               EXIT
+             END IF
+           END DO
+         END DO
+       ELSE
+         DO j=1,nnode
+           k = e%lnods(j)
+           IF( k == 0 )CYCLE
+           e%lnods(j) = e%lnods(j) + lab1
+         END DO
+       END IF
+     END IF
+     !     original nodes are changed
+     DO i=1,nnode
+       e%lnods(i) = chnode(e%lnods(i))
+     END DO
+     !  section must be modified
+     isec = e%matno                 !associated material
+     IF( isec /= osec )THEN         !if a different section than previous
+       jsec = 1
+       DO
+         IF(snn(1,jsec) == isec )EXIT
+         jsec = jsec+1
+       END DO
+       jsec = snn(2,jsec)           !associated section
+       CALL sect_search (jsec,found,sec,k)     !search in list of sections
+       jsec = k
+     END IF
+     e%matno = jsec           !associated section
+     IF( nnode == 9 )ALLOCATE(e%cd(4,2,3))
+
+   END IF
+   nlayr = sec%iprop(1)         !number of layers (integration points)
+   stype = sec%secdef(3)    !section constitutive type
+  ! get internal variables
+   IF(inter) THEN
+     READ(fimpo) l
+     IF( .NOT. overw )ALLOCATE( e%ehist(5))
+     IF( l == 1 )THEN
+       READ(fimpo) (e%ehist(i),i=1,5)
+       IF( stype == 0 )THEN  !layered large strain plasticity
+           IF( .NOT. overw )ALLOCATE( e%strap(6*nlayr,2),e%stres(5,nlayr) )
+           READ(fimpo) (e%strap(i,2),i=1,6*nlayr)
+           e%strap(:,1) = e%strap(:,2)
+           e%stres = 0d0
+         ELSE   !solid isotropic
+           IF( .NOT. overw )ALLOCATE( e%strap(nstre,2))
+           READ(fimpo) (e%strap(i,1),i=1,nstre)
+           NULLIFY(e%stres)
+         END IF
+     ELSE
+       NULLIFY(e%ehist,e%strap)
+     END IF
+   END IF
+   IF( overw )THEN
+     e => e%next
+   ELSE
+     CALL add_ele03e(e, heade, taile)
+   END IF
+ END DO
+ echo_chnode = .TRUE.
+ RETURN
+
+ END SUBROUTINE impo03

@@ -1,0 +1,85 @@
+ SUBROUTINE load16 (igrav,force,gvect,gravy,heade,nnode,ngaus,bezier)
+ !********************************************************************
+ !
+ !***  evaluates gravity load vector for solid element 16
+ !
+ !********************************************************************
+ IMPLICIT NONE
+
+ INTEGER (kind=4) :: igrav,nnode,ngaus
+ REAL (kind=8) :: force(:,:),gvect(3),gravy
+ LOGICAL, INTENT(IN) :: bezier
+ TYPE (ele16), POINTER  :: heade
+
+ !        local variable
+
+ INTEGER (kind=4), PARAMETER :: ngaud = 2
+ REAL (kind=8) :: shape(nnode,ngaus),aux(nnode,3), &
+                  posgp(ngaud),weigp(ngaud)
+ INTEGER (kind=4) i,j,k,n,l,isec,osec
+ REAL (kind=8) weigt,fvect(3,nnode),dens
+ TYPE (ele16), POINTER :: elem
+ TYPE (section), POINTER :: sec
+ LOGICAL :: newm  , order
+ REAL (kind=8), PARAMETER :: a=0.333333333333333d0, &
+                             b=0.666666666666667d0, &
+                             c=0.166666666666667d0, &
+                             tc(2,3) = (/ c,c, b,c, c,b /)
+
+
+ IF(igrav /= 0) THEN       !if gravity is present
+
+   !       gauss points in local coordinates and weigths
+     CALL gaussq (ngaud ,posgp ,weigp )
+     IF( ngaus == 2 )THEN
+       DO i=1,ngaud
+         CALL shape4(nnode,shape(1,i),aux(1,1),a,a,posgp(i),bezier,.FALSE.)
+       END DO
+     ELSE
+       order = nnode == 12
+       k = 0
+       DO i=1,ngaud
+         DO j=1,3
+           k = k+1
+           CALL shape4(nnode,shape(1,k),aux(1,1),tc(1,j),tc(2,j),posgp(i),bezier,order)
+         END DO
+       END DO
+     END IF
+
+   osec = -1
+   elem => heade           !point to first element
+   DO
+     IF (.NOT.ASSOCIATED (elem) ) EXIT    !all elements processed, Exit loop
+
+     isec  = elem%matno                     !associated material
+     newm = isec /= osec
+     IF ( newm )THEN
+       sec => psecs(isec)%p
+       IF( sec%mabas == -1 )THEN
+         dens = sec%rprop(3)
+       ELSE
+         dens = sec%mtbas%prope(5)
+       END IF
+       osec = isec
+       weigt = gravy*dens                     !density
+     END IF
+     IF(weigt /= 0.0d0) THEN                !if not zero
+       fvect = 0
+       DO k=1,ngaus
+         !force vector at each node
+         fvect(1,:) = fvect(1,:) +elem%dvol(k)*weigt*gvect(1)*shape(:,k)
+         fvect(2,:) = fvect(2,:) +elem%dvol(k)*weigt*gvect(2)*shape(:,k)
+         fvect(3,:) = fvect(3,:) +elem%dvol(k)*weigt*gvect(3)*shape(:,k)
+       END DO
+       DO n=1,nnode                               !for each node (nnode=8)
+         l = elem%lnods(n)                        !node number
+         force(1:3,l) = force(1:3,l) + fvect(:,n) !sum on global force vector
+       END DO
+     END IF
+
+     elem => elem%next                       !point to next element
+   END DO
+ END IF
+
+ RETURN
+ END SUBROUTINE load16

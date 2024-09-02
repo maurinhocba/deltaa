@@ -1,0 +1,51 @@
+ SUBROUTINE gauss1(ndime,nnode,neulr,nelem,heade,coord,euler)
+ !********************************************************************
+ !
+ !*** evaluates gauss points constants for truss element
+ !
+ !********************************************************************
+ IMPLICIT NONE
+ INTEGER (kind=4) :: ndime,nnode,neulr,nelem
+ REAL    (kind=8) :: coord(:,:),euler(:,:)
+ TYPE (ele01), POINTER :: heade
+
+ INTEGER (kind=4) ielem,n1,n2,nm
+ TYPE (ele01), POINTER :: e
+ LOGICAL :: same
+ REAL(kind=8) :: x(3,nnode),xc(3,3),t(3,3),long
+
+ e => heade
+ DO ielem = 1,nelem
+   IF( nnode == 2 )THEN
+     n1 = e%lnods(1)
+     n2 = e%lnods(2)
+     same = (n2 == 0)
+     IF( same )THEN !keep original coordinates
+       e%gausv(2:1+ndime) = coord(1:ndime,n1)
+       nm = 3+ndime
+       IF( e%rot)  e%gausv(nm:nm+neulr-1) = euler(1:neulr,n1)
+     END IF
+   ELSE
+     x = coord(:,e%lnods)                     !coordinates
+     xc(:,1) = (x(:,1)+x(:,2)+x(:,3))/3d0     !bottom element center
+     xc(:,2) = (x(:,4)+x(:,5)+x(:,6))/3d0     !top element center
+     xc(:,3) = xc(:,2)-xc(:,1)                !distance vector between centers
+     t(:,1) = x(:,2)-x(:,1)                   !first side
+     t(:,2) = x(:,3)-x(:,1)                   !third side (-)
+     CALL vecpro(t(1,1),t(1,2),t(1,3))        !normal
+     CALL vecuni(3,t(1,1),long)               !direction 1
+     CALL vecuni(3,t(1,3),long)               !unit norma
+     CALL vecpro(t(1,3),t(1,1),t(1,2))        !direction 2
+     ! compute reference values
+     e%gausv(1) = DOT_PRODUCT(xc(:,3),t(:,3))       !distance along normal
+     e%gausv(2) = DOT_PRODUCT(xc(:,3),t(:,1))       !initial distortion dir 1
+     e%gausv(3) = DOT_PRODUCT(xc(:,3),t(:,2))       !initial distortion dir 2
+     e%gausv(4) = DOT_PRODUCT(x(:,4)-x(:,1),t(:,3)) !initial distance nod 1
+     e%gausv(5) = DOT_PRODUCT(x(:,5)-x(:,2),t(:,3)) !initial distance nod 2
+     e%gausv(6) = DOT_PRODUCT(x(:,6)-x(:,3),t(:,3)) !initial distance nod 3
+   END IF
+   e => e%next
+ END DO
+ RETURN
+
+ END SUBROUTINE gauss1

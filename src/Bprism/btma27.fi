@@ -1,0 +1,24 @@
+ SUBROUTINE btma27 (easts,nf3,x,b3)
+ ! compute Strain-displacement matrix for transverse strain
+ ! at assumed strain points for BPRISM  solid-shell element 27 (12 nodes)
+ IMPLICIT NONE
+ !dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: easts
+ REAL (kind=8), INTENT(IN) :: nf3(:,:,:), &    !(nnode,1 or 2,ngaup) Natural gradient in tangent direction
+                              x(:,:)
+ REAL (kind=8), INTENT(OUT) :: b3(:,:,:,:)     !(ndime,nnode,nassp,nface) Bs matrix for both faces
+ !local variables
+ REAL(kind=8) :: f3(3)
+ INTEGER (kind=4) :: node,face,g
+
+ DO face=1,nface   !for each face
+   DO g=1,ngaup      !for each Gauss point
+     f3 = MATMUL(x,nf3(:,face,g) )
+     DO node=1,nnode  !for each node in the face
+       b3(:,node,g,face) = f3(:)*nf3(node,face,g) !F3 * N_cart
+     END DO
+   END DO
+   IF( easts > 0 ) EXIT
+ END DO
+ RETURN
+ END SUBROUTINE btma27

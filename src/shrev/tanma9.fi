@@ -1,0 +1,255 @@
+ SUBROUTINE tanma9(nvarl,ndofe,nstre,ntype,plast,nnode,ngaus,     &
+                   axesc,weigh,shape,deriv,dmatx,props,prop1,     &
+                   jac,r0,stra0,strsg,sedef,strap,ehist,          &
+                   bmatx,x,phig,phil,stiff,matty,secty,zigzag,zigzpp )
+ !***********************************************************************
+ !
+ !****this routine compute the stiffness matrix for beam-shell (elem.2)
+ !
+ !***********************************************************************
+ IMPLICIT NONE
+    !***  routine parameters
+ LOGICAL, INTENT(IN) :: plast,zigzag,zigzpp
+ INTEGER (kind=4), INTENT(IN) :: nvarl,ndofe,ngaus,nnode,axesc,nstre, &
+                                 ntype,matty,secty
+ REAL (kind=8), INTENT(IN) :: dmatx(:),props(:),prop1(:),r0(:),shape(:,:),  &
+                              deriv(:,:),weigh(:),jac(:),stra0(:,:),        &
+                              strsg(:,:),sedef(:),x(:,:),phil(:),phig(:)
+ REAL (kind=8), POINTER :: strap(:,:,:),ehist(:,:)
+ REAL (kind=8), INTENT(OUT) :: stiff(:),bmatx(:,:,:)
+    !***  local variables
+ INTEGER (kind=4) i,j,n,g,k
+ REAL    (kind=8) strdv(nstre),f1,coefm,coenm,def,phin(nnode),rfs,   &
+                  facto,yield,kp,expo,khard,daux(66),d(nstre,nstre), &
+                  epstr,stra1,stra2,dstrp(nstre),spc
+ REAL(kind=8), PARAMETER :: twopi=6.283185307179586d0, &
+       pmat1 = 0.6666666666666666d0, pmat2(2)= (/0.333333333333333d0,1d0/)
+
+    !     compute the local cartesian system
+ IF(axesc == 0) THEN
+   phin = phig
+ ELSE
+   DO n=1,nnode
+     phin(n) = phig(n) + phil(MIN(axesc,n))
+   END DO
+ END IF
+ IF(ABS(phin(nnode)-phin(1)) > 3.5d0) THEN
+   DO n=1,nnode
+      IF(phin(n) < 0) phin(n) = phin(n)+twopi
+   END DO
+ END IF
+ DO g=1,ngaus
+    !       material matrix
+    !       computes the consistent elasto-plastic constitutive matrix
+   def   = sedef(g)                        !h/h0
+   facto = jac(g)*weigh(g)                 !dvolu
+   d     = 0d0                             !d(elast) = 0
+   IF(plast) THEN
+     spc = ehist(4,g)+ehist(5,g)           !sum of consistency parameters
+     IF(spc > 0) THEN
+       khard = props(5)
+       epstr = ehist(1,g)
+       expo  = props(3)
+       rfs   = props(4)
+       IF(expo == 0d0) THEN
+         yield = props(1)+props(2)*epstr
+         kp = props(2)
+       ELSE IF( rfs == 0d0 )THEN
+         IF(epstr > 0.02d0) THEN
+           yield = props(1)*(props(2)+epstr)**expo
+           kp = props(1)*expo/(props(2)+epstr)**(1d0-expo)
+         ELSE
+           kp = props(1)*expo/(props(2)+0.02d0)**(1d0-expo)
+          yield =props(1)*(props(2)+0.02d0)**expo-kp*(0.02d0-epstr)
+         END IF
+       ELSE
+         k = props(1)+props(2)*epstr+  &              !linear +
+             (rfs-props(1))*(1d0-1d0/EXP(expo*epstr)) !saturation law hardening
+         kp= props(2) + (rfs-props(1))*expo/EXP(expo*epstr)    !derivative
+       END IF
+     END IF
+   END IF
+
+   IF(ntype == 1) THEN    !plane stress beam
+     IF( matty > 3 )THEN
+       d(1,1) = dmatx( 1) !; (1,2) = dmatx( 8);              !N
+       d(2,1) = dmatx( 8) ; d(2,2) = dmatx( 4);              !M
+       d(3,3) = dmatx( 7);                                   !V
+       IF( zigzag .AND. secty == 45 )THEN
+         d(4,1) = dmatx(13) !; d(1,4) = dmatx(13)
+         d(4,2) = dmatx(15) !; d(2,4) = dmatx(15)
+         d(5,3) = dmatx(18) !; d(3,5) = dmatx(18)
+         d(4,4) = dmatx(12)
+         d(5,5) = dmatx(17)
+       END IF
+       IF( zigzpp .AND. secty == 46 )THEN
+         d( 1, 1)=dmatx( 1);
+         d( 2, 1)=dmatx( 3); d( 2, 2)=dmatx( 2);
+         d( 3, 3)=dmatx( 4);
+         d( 4, 1)=dmatx( 7); d( 4, 2)=dmatx( 6); d( 4, 4)=dmatx( 5);
+         d( 5, 3)=dmatx( 9); d( 5, 5)=dmatx( 8);
+         d( 6, 1)=dmatx(13); d( 6, 2)=dmatx(12); d( 6, 4)=dmatx(11); d( 6, 6)=dmatx(10);
+         d( 7, 1)=dmatx(17); d( 7, 2)=dmatx(16); d( 7, 4)=dmatx(15); d( 7, 7)=dmatx(14);
+         d( 8, 1)=dmatx(22); d( 8, 2)=dmatx(21); d( 8, 4)=dmatx(20); d( 8, 7)=dmatx(19); d( 8, 8)=dmatx(18);
+         d( 9, 3)=dmatx(25); d( 9, 5)=dmatx(24); d( 9, 9)=dmatx(23);
+         d(10,10)=dmatx(26);
+         d(11, 3)=dmatx(30); d(11, 5)=dmatx(29); d(11,10)=dmatx(28); d(11,11)=dmatx(27)
+       END IF
+     ELSE IF(plast .AND. spc > 0) THEN
+       f1    = prop1(1)*def**2               !h^2/12
+       coefm = prop1(3)/def**2               !1/m0^2
+       coenm = prop1(4)/def                  !1/n0 m0
+       IF(matty == 2) THEN
+                  stra1    = stra0(1,g)+strap(1,g,1)   ! == stran(1)
+         dstrp(1) = strap(1,g,1)/stra1
+         dstrp(2) = strap(2,g,1)/stra1
+         dstrp(3) = strap(3,g,1)/SQRT(stra1)/def
+         strdv(1) = strsg(1,g)*stra1          -khard*dstrp(1)
+         strdv(2) = strsg(2,g)*stra1          -khard*dstrp(2)*f1
+         strdv(3) = strsg(3,g)*SQRT(stra1)*def-khard*dstrp(3)
+       ELSE
+         dstrp(1) = strap(1,g,1)
+         dstrp(2) = strap(2,g,1)
+         dstrp(3) = strap(3,g,1)
+         strdv(1) = strsg(1,g) - khard*dstrp(1)
+         strdv(2) = strsg(2,g) - khard*dstrp(2)*f1
+         strdv(3) = strsg(3,g) - khard*dstrp(3)
+       END IF
+       CALL j2smt9(nstre, 1,yield,kp,khard,f1,prop1(2),coefm,      &
+                   coenm,dmatx(1),dmatx(3),d(1,1),strdv,ehist(4,g),pmat1)
+       IF(matty == 2) THEN          !upper triangle only
+         d(1,1) = d(1,1)/stra1**2
+         d(1,2) = d(1,2)/stra1**2
+         d(1,3) = d(1,3)/stra1**1.5/def
+         d(2,2) = d(2,2)/stra1**2
+         d(2,3) = d(2,3)/stra1**1.5/def
+         d(3,3) = d(3,3)/stra1/def**2
+       END IF
+     ELSE IF( plast .AND. matty == 2) THEN !elastic step large strains
+       stra1  = stra0(1,g)+strap(1,g,1)
+       d(1,1) = dmatx(1)/stra1**2
+       d(2,2) = dmatx(2)/stra1**2
+       d(3,3) = dmatx(3)/stra1/def**2
+     ELSE                 !elastic (small strains)
+       d(1,1) = dmatx(1)
+       d(2,2) = dmatx(2)
+       d(3,3) = dmatx(3)
+     END IF
+   ELSE
+
+     IF(ntype == 3) facto = facto*r0(g)*twopi
+
+     IF( matty > 3 )THEN
+       d(1,1) = dmatx( 1); d(1,2) = dmatx( 2); d(1,3) = dmatx( 8); d(1,4) = dmatx( 9)
+       d(2,1) = dmatx( 2); d(2,2) = dmatx( 3); d(2,3) = dmatx(10); d(2,4) = dmatx(11)
+       d(3,1) = dmatx( 8); d(3,2) = dmatx(10); d(3,3) = dmatx( 4); d(3,4) = dmatx( 5)
+       d(4,1) = dmatx( 9); d(4,2) = dmatx(11); d(4,3) = dmatx( 5); d(4,4) = dmatx( 6)
+       d(5,5) = dmatx( 7)
+       IF( zigzag )THEN   !
+         d(6,1) = dmatx(13);  d(1,6) = dmatx(13)
+         d(6,2) = dmatx(14);  d(2,6) = dmatx(14)
+         d(6,3) = dmatx(15);  d(3,6) = dmatx(15)
+         d(6,4) = dmatx(16);  d(4,6) = dmatx(16)
+         d(7,5) = dmatx(18);  d(5,7) = dmatx(18)
+         d(6,6) = dmatx(12)
+         d(7,7) = dmatx(17)
+       END IF
+     ELSE
+       d(1,1) = dmatx(1)
+       d(1,2) = dmatx(2)
+       d(2,1) = dmatx(2)
+       d(2,2) = dmatx(1)
+       d(3,3) = dmatx(3)
+       d(3,4) = dmatx(4)
+       d(4,3) = dmatx(4)
+       d(4,4) = dmatx(3)
+       d(5,5) = dmatx(5)
+       IF( plast .AND. spc > 0) THEN
+         f1    = prop1(1)*def**2
+         coefm = prop1(3)/def**2
+         coenm = prop1(4)/def
+         IF(matty == 2) THEN
+           stra1 = stra0(1,g)+strap(1,g,1)
+           stra2 = stra0(2,g)+strap(2,g,1)
+           dstrp(1) = strap(1,g,1)/stra1
+           dstrp(2) = strap(2,g,1)/stra2
+           dstrp(3) = strap(3,g,1)/stra1
+           dstrp(4) = strap(4,g,1)/stra2
+           dstrp(5) = strap(5,g,1)/SQRT(stra1)/def
+           strdv(1) = strsg(1,g)*stra1           - khard*dstrp(1)
+           strdv(2) = strsg(2,g)*stra2           - khard*dstrp(2)
+           strdv(3) = strsg(3,g)*stra1           - khard*dstrp(3)*f1
+           strdv(4) = strsg(4,g)*stra2           - khard*dstrp(4)*f1
+           strdv(5) = strsg(5,g)*SQRT(stra1)*def - khard*dstrp(5)
+         ELSE
+           strdv(1) = strsg(1,g) - khard*strap(1,g,1)
+           strdv(2) = strsg(2,g) - khard*strap(2,g,1)
+           strdv(3) = strsg(3,g) - khard*strap(3,g,1)*f1
+           strdv(4) = strsg(4,g) - khard*strap(4,g,1)*f1
+           strdv(5) = strsg(5,g) - khard*strap(5,g,1)
+         END IF
+         CALL j2smt9(nstre, 2,yield,kp,khard,f1,prop1(2),coefm,coenm, &
+                     prop1(5),prop1(7),d,strdv,ehist(4,g),pmat2)
+         IF(matty == 2) THEN  !only the lower triangle
+           d(1,1) = d(1,1)/stra1**2
+           d(2,1) = d(2,1)/stra1/stra2
+           d(3,1) = d(3,1)/stra1**2
+           d(4,1) = d(4,1)/stra1/stra2
+           d(5,1) = d(5,1)/stra1**1.5/def
+           d(2,2) = d(2,2)/stra2**2
+           d(3,2) = d(3,2)/stra1/stra2
+           d(4,2) = d(4,2)/stra2**2
+           d(5,2) = d(5,2)/stra1**0.5/stra2/def
+           d(3,3) = d(3,3)/stra1**2
+           d(4,3) = d(4,3)/stra1/stra2
+           d(5,3) = d(5,3)/stra1**1.5/def
+           d(4,4) = d(4,4)/stra2**2
+           d(5,4) = d(5,4)/stra1**0.5/stra2/def
+           d(5,5) = d(5,5)/stra1/def**2
+         END IF
+       ELSE IF ( plast  .AND. matty == 2) THEN
+         stra1 = stra0(1,g)+strap(1,g,1)
+         stra2 = stra0(2,g)+strap(2,g,1)
+         d(1,1) = dmatx(1)/stra1**2
+         d(2,1) = dmatx(2)/stra1/stra2
+         d(2,2) = dmatx(1)/stra2**2
+         d(3,3) = dmatx(3)/stra1**2
+         d(4,3) = dmatx(4)/stra1/stra2
+         d(4,4) = dmatx(3)/stra2**2
+         d(5,5) = dmatx(5)/stra1/def**2
+       ELSE
+         d(1,1) = dmatx(1)
+         d(2,1) = dmatx(2)
+         d(2,2) = dmatx(1)
+         d(3,3) = dmatx(3)
+         d(4,3) = dmatx(4)
+         d(4,4) = dmatx(3)
+         d(5,5) = dmatx(5)
+       END IF
+     END IF
+   END IF
+   !       scales d matrix & stress vector for numerical integration
+   k=0
+   DO i = 1,nstre      !only the lower triangle
+     !WRITE(58,"(9e12.4)")d(1:nstre,i)
+     DO j = i,nstre
+       k = k+1
+       daux(k) = d(j,i)*facto
+     END DO
+     strdv(i) = strsg(i,g)*facto
+   END DO
+   !                  b matrix
+   CALL bmatx9(nnode,ntype,deriv(:,g),shape(:,g),phin,x,r0(g),  &
+               bmatx,jac(g),zigzag,zigzpp,secty)
+    !                  sums the material contribution
+   !WRITE(58,"(8E12.4)")(bmatx(:,:,i),i=1,nstre)
+   CALL btdbpr(bmatx(1,1,1),daux(1),stiff(1),nvarl,nstre)
+!   WRITE(58,"(8E12.4)")(stiff(i),i=1,40)
+!   WRITE(58,"()")
+
+    !                  geometric part
+   CALL kgeom9(nnode,ndofe,nvarl,ntype,deriv(:,g),shape(:,g),         &
+                phin,x,jac(g),r0(g),strdv,stiff)
+ END DO
+ RETURN
+ END SUBROUTINE tanma9

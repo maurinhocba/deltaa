@@ -1,0 +1,65 @@
+ SUBROUTINE masm19(ndime,heade,emass,mass,sumat,lumpd,ver)
+ !
+ !  Computes mass matrix of a triangle
+ !
+ IMPLICIT NONE
+ LOGICAL, INTENT(IN) :: lumpd
+ INTEGER (kind=4), INTENT(IN) :: ndime,ver
+ REAL (kind=8), INTENT(IN OUT) :: emass(:,:),sumat,mass(:)
+ TYPE( ele19 ), POINTER :: heade
+
+ INTEGER (kind=4) :: isec,inode,lnode,i,j,k,lm(ndime,nnode),osec
+ REAL (kind=8) :: voli,rhoel,ms(nnode),sume1,ff,mas(78)
+ TYPE( ele19 ), POINTER :: e
+ TYPE (section), POINTER :: sec
+
+
+ osec = -1
+ sume1=0.
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED (e) )EXIT
+   isec = e%matno
+   IF( osec /= isec )THEN
+     sec => psecs(isec)%p
+     rhoel = sec%mtbas%prope(5)                !material density
+     osec = isec
+   END IF
+   ms = 0d0
+   DO i=1,ngaus
+     voli = e%area(i)*rhoel
+     sume1 = sume1 + voli
+     IF( lumpd )THEN
+       ms(1:nnode) = ms(1:nnode) + voli*shapef(:,i,ver)
+     ELSE
+       k = 1
+       j = 13
+       DO inode=1,nnode
+         ff = voli*shapef(inode,i,ver)
+         DO lnode=inode,nnode
+           mas(k) = mas(k) + ff*shapef(lnode,i,ver)
+           IF( i == ngaus) mas(j) = mas(k)
+           k= k+2
+           j= j+2
+         END DO
+         k = j-1
+         j = k + (nnode-inode)*ndime
+       END DO
+     END IF
+   END DO
+   IF( lumpd )THEN
+     DO inode=1,nnode
+       lnode = e%lnods(inode)
+       emass(1:ndime,lnode)=emass(1:ndime,lnode)+ms(inode)
+     END DO
+   ELSE
+     CALL ensmat(ndime*nnode,lm(1,1),mas(1),mass(1))
+   END IF
+   e => e%next
+ END DO
+ !IF(iwrit == 1) &
+ WRITE(lures,"(//'  total mass for 2D solid element :', e15.7)",ERR=9999)sume1
+ sumat = sumat + sume1
+ RETURN
+ 9999 CALL runen2(' ')
+ END SUBROUTINE masm19

@@ -1,0 +1,277 @@
+ SUBROUTINE resv07(heade,coora,euler,resid,energ,istop,bottom,    &
+                   top,coorb,coort,ifact,ttime,ansmm,nnass,nstre, &
+                   zigzag,shape,ap1,omat)
+ !********************************************************************
+ !
+ !***   evaluation of integral (b)**t*(sigma) for shell elements
+ !
+ !********************************************************************
+ USE npo_db, ONLY : psia ,ifpre
+ USE solv_db, ONLY : displ
+ IMPLICIT NONE
+ INTEGER(kind=4), PARAMETER :: ndime = 3
+ LOGICAL, INTENT(IN) :: bottom,top  !flags for top and bottom surface computation
+ INTEGER (kind=4), INTENT(IN) :: ansmm,     & !membrane formulation type
+                                 nnass        !number of shear strains
+ INTEGER (kind=4), INTENT(IN) :: nstre        !number of strain/stress measures
+ INTEGER (kind=4), INTENT(OUT) :: istop,    & !flag for error detection
+                                  ifact(:)    !weigths for surface computation
+ REAL(kind=8),INTENT (IN) :: coora(:,:),    & !present coordinates
+                             euler(:,:),    & !present local systems
+                             shape(:,:),    & !shape functios at Gauss Points
+                             ap1(:,:,:),    & !PA matrix at Gauss Points (shear)
+                             omat(:,:,:,:), & !PA matrix at Gauss Points (membrane)
+                             ttime            !present total time
+ REAL(kind=8),INTENT (IN OUT) :: resid(:,:),& !internal nodal forces
+                                 energ(:),  & !bottom surface coordinates
+                                 coorb(:,:),& !bottom surface coordinates
+                                 coort(:,:)   !top surface coordinates
+ TYPE (ele07), POINTER  :: heade              !pointer to first element
+ LOGICAL, INTENT(IN) :: zigzag
+
+ INTEGER (kind=4) ielem,nvarl,isec,l,n,matty,nlayr,osec,np,ndofe,secty,g,k,i
+ LOGICAL ::  plast
+
+ REAL (kind=8) :: dmatx(15),sf(3),             & !material properties
+                  bsmtx(5,nnode,nnass),        & !shear B-matrix
+                  gmatx(3,nnode,nasmm)           !membrane B-matrix
+ REAL (kind=8), ALLOCATABLE :: bmsig(:,:),     & !equivalent nodal forces
+                               props(:),       & !material properties
+                               bmatx(:,:,:)      !global B-matrix
+ REAL (kind=8) :: thick,thico,x(ndime,nnode),t(ndime,nnode),lb(ndime,2,nnode),psi(2,nnode),          &
+                  norml(ndime),dx(ndime,2,ngaus),dt(ndime,2,ngaus),tt(ndime,ngaus),dxt(ndime,nnass), &
+                  ts(ndime,nnass),dfi(ndime,3,3),stran(nstre,ngaus),auxil(nstre,ngaus),f(3,3),s(3),  &
+                  otf(9,3),aux(2)
+
+ REAL (kind=8) :: incd(30),bb(5,2),dstr(2)
+ TYPE(ele07), POINTER :: e
+ TYPE(section), POINTER :: sec
+ TYPE(mater), POINTER :: mat
+ INTERFACE
+   INCLUDE 'vecpro.h'
+   INCLUDE 'stgp06.h'
+END INTERFACE
+
+ !***  loop over all the elements
+
+ osec = -1
+ bsmtx = 0d0                        ! B matrix for ANS shear model
+ IF(ansmm > 0) gmatx = 0d0
+ e => heade
+ DO
+   IF( .NOT.ASSOCIATED(e) )EXIT       !last element processed => EXIT
+   ielem = e%numel                    ! to print erros
+   isec = e%matno                     ! associated section
+
+   IF( isec /= osec )THEN       !present and previous material diff
+     sec => psecs(isec)%p         !point to section
+     secty = sec%secty            !section type may be 14 (solid) & 15 (multilayered)
+     matty = sec%secdef(3)        !14- mat type may be = 0   layered isotropic
+                                  !                    = 1   stress resultant isotropic with large strains
+                                  !                    = 2   stress resultant isotropic with small strains
+                                  !                    = 3   SPECIAL orthotropic
+                                  !                    = 4   GENERAL orthotropic
+                                  !                    = 5   GENERAL orthotropic with COUPLING
+     IF( sec%mabas > 0 )THEN    ! secty=14:  if one-material section then
+       mat => sec%mtbas               !point to material properties
+       plast = matty <= 2 .AND. mat%matdef(3) > 1     !isotropic & elastic-plastic
+       nlayr = sec%iprop(1)                           !number of integration layers
+     ELSE                       ! secty = 15
+       plast = .FALSE.    !no plasticity is possibe
+       nlayr = 1          !integrated
+     END IF
+     thico = sec%rprop(1) !original thickness
+     IF(matty == 0)THEN   !layered isotropic
+       np = 12              !pointer to section database
+     ELSE                 !in therms of forces and moments
+       np = 21              !pointer to section database
+       IF(matty == 5)THEN
+         IF(sec%rprop(4) /= 0d0 )THEN
+           sf = sec%rprop(4)
+         ELSE
+           sf = sec%rprop(71:73)
+         END IF
+      END IF
+     END IF
+     l = sec%secdef(2)            !size of array rprop
+     n = MIN(20,l)                    !avoids problems in debug
+     dmatx(1:n-5) = sec%rprop(6:n)
+     IF(l > np )THEN
+       IF( ALLOCATED(props) )DEALLOCATE(props)
+       ALLOCATE (props(l-np+1))
+       props = sec%rprop(np:l)
+     END IF
+     osec = isec
+     ndofe = 5
+     IF( secty == 15 .AND. zigzag )ndofe = 7
+     nvarl = nnode*ndofe
+     IF( ALLOCATED(bmsig) )DEALLOCATE (bmsig)
+     ALLOCATE( bmsig(ndofe,nnode),bmatx(ndofe,nnode,nstre))
+     bmatx = 0d0                        ! Global B matrix
+   END IF
+   thick = thico
+
+   !     gathers the actual coordinates and directors
+   x  = coora(:,e%lnods)             !mid surface position
+   lb(:,1,:) = euler(1:3,e%lnods)    !reduced local system
+   lb(:,2,:) = euler(4:6,e%lnods)    !for rotations definition
+   t  = euler(7:9,e%lnods)           !directors
+   !---- incremental displacements
+   !g = 0
+   !DO n=1,nnode
+   !  k = e%lnods(n)
+   !  DO l=1,ndofe
+   !    g = g + 1
+   !    i = ifpre(l,k)
+   !    IF( i > 0 )  THEN
+   !      incd(g) = displ(i)
+   !    ELSE
+   !      incd(g) = 0D0
+   !    END IF
+   !  END DO
+   !END DO
+   !-------------------
+   IF( ASSOCIATED(e%nangl) )THEN       !RZT hierarchical values
+     DO n=1,nnode
+       l = e%lnods(n)
+       psi(1,n) = psia(1,l)*e%nangl(1,n)+psia(2,l)*e%nangl(2,n)
+       psi(2,n) = psia(2,l)*e%nangl(1,n)-psia(1,l)*e%nangl(2,n)
+     END DO
+   END IF
+   !     evaluates first and second fundamental forms and distorsions
+   CALL stran7(ansmm,nnass,e%cartd,shape,ap1,x,t,e%jacin,omat,stran,dx,dt,tt,dxt,ts,dfi)
+   !     computes strains substracting the initial values -->dstra
+   auxil(1:8,:) = stran(1:8,:)-e%stra0(1:8,:)
+   !                computes b-shear matrix
+   IF( nnass > ngaus ) CALL bshem7(nnass,dxt,ts,lb,bsmtx)
+   !                computes b-membrane matrix
+   IF( ansmm > 0 ) CALL bmmt07(ansmm,dfi,gmatx)
+   bmsig = 0d0                        ! zero the internal forces array
+   DO g=1,ngaus
+     CALL vecpro(dx(:,1,g),dx(:,2,g),norml)
+     e%ambda(2,g)= e%ambda(1,g)/DOT_PRODUCT(norml,tt(1:3,g))
+     IF(nlayr == 1 )THEN
+       auxil(1:2,g) = auxil(1:2,g)/2d0
+       IF( ndofe == 7 ) THEN    ! psi gradient
+         auxil( 9,g) = DOT_PRODUCT(psi(1,:),e%cartd(:,1,g))
+         auxil(10,g) = DOT_PRODUCT(psi(2,:),e%cartd(:,2,g))
+         auxil(11,g) = DOT_PRODUCT(psi(1,:),e%cartd(:,2,g))
+         auxil(12,g) = DOT_PRODUCT(psi(2,:),e%cartd(:,1,g))
+         auxil(13,g) = DOT_PRODUCT(shape(:,g),psi(1,:))
+         auxil(14,g) = DOT_PRODUCT(shape(:,g),psi(2,:))
+       END IF
+     ELSE ! for large-strain multilayer
+       auxil(1:2,g) = auxil(1:2,g)+1d0  !diagonal values
+       auxil(4:5,g) = auxil(4:5,g)*2d0  !twice the curvatures
+     END IF
+   END DO
+
+   IF(ansmm > 0 )   e%beta = 0d0    ! assumed strain for membrane
+
+   ! evaluates total stresses at gauss points --> strsg
+!  IF( plast )THEN
+!    strap(:,:,1) =  strap(:,:,2)   !initializes current values
+!    ehist(1,:) = ehist(3,:)        !equivalent plastic strain
+!    ehist(2,:) = 0d0               !equivalent stress
+!    ehist(4:5,:) = 0d0             !consistent parameters
+!    IF(nlayr == 1)THEN
+!      ! computes elastic strains --> auxil
+!      auxil = auxil - strap(:,:,2)
+!      DO g=1,ngaus
+!        CALL radre6(matty,dx(1,1,g),dx(1,2,g),ambda(1,g),             &
+!                    tgp(1,g),auxil(1,g),strsg(1,g),strap(1,g,1),      &
+!                    ehist(1,g),dmatx(1),props(1),istop)
+!      END DO
+!    ELSE
+!      CALL slayer(ngaus,nstre,strsg(1,1),auxil(1,1),dmatx(1),          &
+!                  props(1),strap(1,1,1),stres(1,1,1),ambda(1,1),nlayr, &
+!                  thick,istop,ehist(1,1),ielem,plast)
+!    END IF
+!
+!  ELSE     !elastic
+!    IF(nlayr == 1)THEN
+       IF( ndofe == 5 )THEN
+         CALL istgp7(nstre,e%strsg,auxil,dmatx,e%ambda,matty,props,sf)
+       ELSE      ! zigzag
+         CALL stgp06(ngaus,e%strsg,auxil,dmatx)
+       END IF
+!    ELSE
+!      CALL slayer(ngaus,nstre,strsg(1,1),auxil(1,1),dmatx(1),       &
+!                  props(1),s(1),s(2),ambda(1,1),nlayr,              &
+!                  thick,istop,s(2),ielem,plast)
+!
+!    END IF
+!    !DO g = 1,ngaus
+!    !  DO n=1,nstre
+!    !    energ(n) = energ(n) + dvolu(g)*strsg(n,g)*auxil(n,g)
+!    !  END DO
+!    !END DO
+!  END IF
+   !     initializes qaux
+     IF( nnass > ngaus )e%qbar = 0d0
+   !
+   DO g=1,ngaus
+     auxil(:,g) = e%dvolu(g)*e%strsg(:,g)  !       scales stresses for numerical integration
+     !       computes b matrix , bending & membrane
+     CALL bmatx7(ansmm,e%cartd(:,:,g),lb,bmatx,dx(:,:,g),dt(:,:,g),ndofe,e%nangl,shape(:,g),nnass,tt(:,g))
+     IF( ndofe == 7 )THEN
+       CALL proma3(bmsig(1,1),bmatx(1,1, 9),auxil( 9,g),nvarl,4,.FALSE.)  !Psi moments
+       CALL proma3(bmsig(1,1),bmatx(1,1,13),auxil(13,g),nvarl,2,.FALSE.)  !Psi shears
+     END IF
+     !equivalent beta for membrane stresses
+     IF(ansmm > 0 ) THEN   !ANS for membrane model
+       CALL proma3(bmsig(1,1),bmatx(1,1,4),auxil(4,g),nvarl,3,.FALSE.)  !curvatures-moments only
+       !  Transpose bar T
+       f = RESHAPE( (/     e%jacin(1,1,g)**2,                 e%jacin(1,2,g)**2,             e%jacin(1,1,g)*e%jacin(1,2,g), &
+                           e%jacin(2,1,g)**2,                 e%jacin(2,2,g)**2,             e%jacin(2,1,g)*e%jacin(2,2,g), &
+                       2d0*e%jacin(1,1,g)*e%jacin(2,1,g), 2d0*e%jacin(1,2,g)*e%jacin(2,2,g), e%jacin(1,1,g)*e%jacin(2,2,g)  &
+                                                                                             +e%jacin(1,2,g)*e%jacin(2,1,g)/),(/3,3/))
+       otf = MATMUL(TRANSPOSE(omat(:,:,2,g)),f)        ! O^t x T^t
+       e%beta = e%beta + MATMUL(otf,auxil(:,g))
+     ELSE     ! standard displacement formulation for membrane model
+       CALL proma3(bmsig(1,1),bmatx(1,1,1),auxil(1,g),nvarl,6,.FALSE.)
+     END IF
+     IF( nnass == ngaus) THEN  !standard displacement formulation
+       CALL proma3(bmsig(1,1),bmatx(1,1,7),auxil(7:8,g),nvarl,2,.FALSE.)
+     ELSE
+       !       equivalent q for transverse shear
+       s(1)= e%jacin(1,1,g)*auxil(7,g)+e%jacin(2,1,g)*auxil(8,g)
+       s(2)= e%jacin(1,2,g)*auxil(7,g)+e%jacin(2,2,g)*auxil(8,g)
+       e%qbar = e%qbar +  MATMUL(TRANSPOSE(ap1(:,:,g)),s(1:2))
+     END IF
+
+   END DO  !Gauss point loop
+   ! equivalent nodal forces for membrane part (ANS)
+   IF(ansmm > 0) THEN
+     DO n=1,nnode
+       bmsig(1:3,n) = bmsig(1:3,n) + MATMUL(gmatx(:,n,:),e%beta)
+     END DO
+   END IF
+   ! equivalent nodal forces for shear part (ANS)
+   IF( nnass > ngaus )THEN
+     DO n=1,nnode
+       bmsig(1:5,n) = bmsig(1:5,n) + MATMUL(bsmtx(1:5,n,:),e%qbar)
+     END DO
+   END IF
+
+
+   DO n=1,nnode
+     l = e%lnods(n)
+     resid(1:5,l) = resid(1:5,l) + bmsig(1:5,n)
+     IF(zigzag)resid(7:8,l) = resid(7:8,l) + bmsig(6:7,n)
+   END DO
+
+   IF(top .OR. bottom)THEN
+     thick = thick*SUM(e%ambda(2,1:ngaus))/ngaus  !present average thickness
+     DO n=1,nnode
+       l = e%lnods(n)
+       IF( top  )coort(:,l) = coort(:,l) + euler(7:9,l)*thick
+       IF(bottom)coorb(:,l) = coorb(:,l) - euler(7:9,l)*thick
+       ifact(l) = ifact(l) + 2
+     END DO
+   END IF
+   e => e%next
+ END DO
+ !WRITE(58,"(5E15.5)")resid(:,:)
+ RETURN
+ END SUBROUTINE resv07

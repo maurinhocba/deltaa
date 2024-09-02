@@ -1,0 +1,354 @@
+ SUBROUTINE top_array30(lside,nelem,heade)
+
+ ! Create topological array
+
+ IMPLICIT NONE
+ INTEGER (kind=4), INTENT(IN) :: nelem !number of elements, number of points
+ TYPE (ele30), POINTER :: heade   !pointer to first element in the set
+ LOGICAL :: lside
+ !---------------------------------------
+
+ ! local variables
+ INTEGER (kind=4) maxsd,i,ii,j,jj,k,ll,l,n,nsd,j1,k1,ielem,jelem,nn,jjj,  &
+                  nbs,nl(12),nes(3)
+ INTEGER (kind=4), PARAMETER :: nextn(3) = (/2,3,1/) !cycling list
+ TYPE (ele30), POINTER  :: e, ej                     !element pointers
+ LOGICAL :: first,err,sides(3)
+ INTEGER (kind=4), ALLOCATABLE :: ns(:,:),ln(:,:),lock(:)
+ ! LOGICAL ALLOCATABLE :: boundn(:)
+
+
+ !_____________________________
+ maxsd = 2*nelem+1      !maximum number of sides
+ ALLOCATE (ns(7,maxsd)) !auxiliar array (addmits 4 elements over one side)  FOR CHECK
+ ns = 0                 !initializes array
+ nsd = 0                !initializes number of sides
+ e => heade             !point to first element
+ ! count appearence of each side
+ DO i=1,nelem           !for each element
+   DO ii=1,3            !for each side
+     j = e%lnods(kk(3,ii))     !internal node numeration (first node of the side)
+     k = e%lnods(kk(2,ii))     !internal node numeration (second node)
+     first = j < k             !J is the node with lower numeration
+     l = MIN(j,k)              !use the lower value
+     k = MAX(j,k)              !greater value
+     j = l                     !lower value
+     jj = 1                    !initializes pointer
+     DO                    !search in existing sides
+       IF( jj > nsd )THEN  !all sides checked ?
+         nsd = jj          !increase number of sides
+         ns(1,jj) = j      !keep side nodes
+         ns(2,jj) = k
+         ns(3,jj) = 4      !position
+         EXIT
+       ELSE IF(ns(1,jj) == j .AND. ns(2,jj) == k )THEN  !side exists
+         ns(3,jj) = ns(3,jj) + 1   !position
+         EXIT
+       END IF
+       jj = jj + 1         !next side
+     END DO
+     ! keep element and side in one value
+     l = ns(3,jj)          !position in array NS
+     IF( first )THEN   !ordered
+       ns(l,jj) =   ii+10*i    !keeps ii = side in element and i = element
+     ELSE              !reverse order
+       ns(l,jj) = -(ii+10*i)
+     END IF
+   END DO
+   e => e%next          !go to next element
+ END DO
+ ! generates data base
+ e => heade             !point to first element
+ ielem = 1              !initializes element I
+ ej => heade            !point to first element
+ jelem = 1              !initializes element J
+ nbs = 0                !initializes number of branching nodes ¿Element 30 does not include Branching?
+ err = .FALSE.
+ !
+ DO i=1,nsd             !for each side
+   nn = ns(3,i)-3       !number of connected elements
+   IF( nn > 2) THEN     !CHECK if a branching side and PRINT ERROR Msg
+     nbs = nbs + 1        !increase number
+
+     IF(nbs == 1)THEN   !for first branching side
+       WRITE(lures,"(' error in connectivities, more than 2 elements sharing a side (Branching)')",ERR=9999)
+       WRITE(*    ,"(' error in connectivities, more than 2 elements sharing a side (Branching)')")
+       WRITE(58   ,"(' error in connectivities, more than 2 elements sharing a side (Branching)')",ERR=9999)
+     END IF
+     WRITE(lures,"(' Side nodes: ',2i7)",ERR=9999) ns(1:2,i)    !side nodes j-k (ordered)
+     DO ii=1,nn                     !for each element on this side
+       jj = ns(ii+3,i)     !element + side
+       j = MOD(ABS(jj),10) !side
+       k = ABS(jj-j)/10    !element
+       WRITE(lures,"(i7,i3)",ERR=9999) k,j  !element and side
+     END DO
+
+   ELSE IF( nn == 2 )THEN          !two elements connected (inner element)
+     !  first element
+     jj = ns(4,i)          !element + side
+     j = MOD(ABS(jj),10)   !side
+     k = ABS(jj-j)/10      !element
+     jjj= jj/k           !+/-1
+       !  point to element k
+     IF( k > ielem )THEN
+       n = ielem
+     ELSE
+       e => heade
+       n = 1
+     END IF
+     DO ielem=n,k-1
+       e => e%next
+     END DO
+     ! second element
+     ll = ns(5,i)          !element + side
+     j1 = MOD(ABS(ll),10)  !side1
+     k1 = ABS(ll-j1)/10    !element1
+       !  point to element k1
+     IF( k1 > jelem )THEN
+       n = jelem
+     ELSE
+       ej => heade
+       n = 1
+     END IF
+     DO jelem=n,k1-1
+       ej => ej%next
+     END DO
+     !  store information
+     IF( jjj*ll > 0 )THEN
+       IF( .NOT.err )THEN
+         WRITE(lures,"('  WARNING, non-orientated surface found ')",ERR=9999)
+         WRITE(*    ,"('  WARNING, non-orientated surface found ')")
+         WRITE(58   ,"('  WARNING, non-orientated surface found ')",ERR=9999)
+       END IF
+       WRITE(lures,"('  Elements  ',i6,' and ',i6)",ERR=9999) e%numel,ej%numel
+       e%lside(j)   = -jelem   !keep side elements
+       ej%lside(j1) = -ielem   !keep side elements
+       CALL ele30p(j,e,ej,.TRUE.)  !neighbour element
+       CALL ele30p(j1,ej,e,.TRUE.) !neighbour element
+       err = .TRUE.
+     ELSE
+       e%lside(j)  = jelem    !keep side elements
+       ej%lside(j1) = ielem   !keep side elements
+       CALL ele30p(j,e,ej,.TRUE.)  !neighbour element
+       CALL ele30p(j1,ej,e,.TRUE.) !neighbour element
+     END IF
+     e%lnods(j+3)   = ej%lnods(j1) !opposite global node
+     ej%lnods(j1+3) = e%lnods(j)   !opposite global node
+   END IF
+ END DO
+ IF( nbs > 0) STOP 'branched surface not allowed'
+ DEALLOCATE (ns)
+ IF( err ) THEN !reverse connectivities found
+   ALLOCATE(ln(3,nelem),lock(nelem))
+   lock = 0
+   e => heade
+   DO i=1,nelem
+     ln(1:3,i) = e%lside(1:3)
+     e => e%next
+   END DO
+   CALL lock30(ln,1,lock,1)
+   e => heade
+   DO i=1,nelem
+     SELECT CASE (lock(i))
+     CASE (-1 ) !reverse things
+       nl(1:6) = e%lnods(1:6)
+       e%lnods(1:6) = nl((/ 1,3,2,4,6,5  /))
+       e%lside(1) = ABS(ln(1,i))
+       e%lside(2) = ABS(ln(3,i))
+       e%lside(3) = ABS(ln(2,i))
+     CASE (0)
+       STOP 'element not accessed'
+     CASE (1 ) !check
+       DO j=1,3
+         IF( e%lside(j) < 0 ) e%lside(j) = -e%lside(j)
+       END DO
+     END SELECT
+     e => e%next
+   END DO
+   DEALLOCATE (ln,lock)
+ END IF
+ ! compute second ring of topological array
+ e=>heade
+ DO ielem=1,nelem
+   DO i=1,3
+     ii = e%lnods(i+3)        !node opposite to side
+     IF( ii == 0 )CYCLE       !side element does not exist
+     CALL ele30p(i,e,ej,.FALSE.) !point ej to side element
+     ! find opposite node in ej
+     j = 1
+     DO
+       IF(ej%lnods(j) == ii )EXIT !node found
+       j = j+1                    !next node
+     END DO
+     k = MOD(j,3)+4               !position in connectivities
+     e%lnods(5+2*i) = ej%lnods(k) !get node
+     k = MOD(k,3)+4               !position in connectivities
+     e%lnods(6+2*i) = ej%lnods(k) !get node
+   END DO
+   e => e%next
+ END DO
+ lside = .TRUE.              !First and second ring of topological array created
+ ! reorder connectivities if a node is in the boundary
+ !WRITE(58,"('Extended connectivities')")
+ e => heade             !point to first element
+ DO ielem = 1,nelem
+   e%bcode = 0
+   IF( ANY(e%lnods(7:12) == 0) )THEN  !if there are missing nodes in the patch
+     n = 0  !number of missing sides
+     nn = 0 !number of 2nd ring nodes missing
+     DO i=1,3                !for each side
+       sides(i) = e%lnods(i+3) /= 0
+       IF( sides(i) )THEN
+         IF( e%lnods(5+2*i) == 0) nn=nn+1
+         IF( e%lnods(6+2*i) == 0) nn=nn+1
+       ELSE
+         n = n+1
+         nn = nn+2
+       END IF
+     END DO
+     IF( n == 0 .AND. nn == 2 )THEN ! CASE 1
+       IF( e%lnods(10) == 0 .AND. e%lnods(11) == 0)THEN
+         i = 0  !do nothing
+       ELSE IF( e%lnods( 8) == 0 .AND. e%lnods( 9) == 0)THEN
+         i = +1 !rotate counter-clock-wise
+       ELSE IF( e%lnods( 7) == 0 .AND. e%lnods(12) == 0)THEN
+         i = -1 !rotate clock-wise
+       ELSE
+         STOP 'n = 0, nn = 2'
+       END IF
+       e%bcode = 1
+     ELSE IF( n == 0 .AND. nn == 4 )THEN ! CASE 2
+       IF( e%lnods(10) == 0 .AND. e%lnods(11) == 0 .AND.  e%lnods( 7) == 0 .AND. e%lnods(12) == 0 )THEN
+         i = 0  !do nothing
+       ELSE IF( e%lnods(10) == 0 .AND. e%lnods(11) == 0 .AND.  e%lnods( 8) == 0 .AND. e%lnods( 9) == 0)THEN
+         i = +1 !rotate counter-clock-wise
+       ELSE IF(  e%lnods( 8) == 0 .AND. e%lnods( 9) == 0 .AND. e%lnods( 7) == 0 .AND. e%lnods(12) == 0)THEN
+         i = -1 !rotate clock-wise
+       ELSE
+          STOP 'n = 0, nn = 4'
+       END IF
+       e%bcode = 2
+     ELSE IF( n == 1 .AND. nn == 2 )THEN ! CASE 3
+       IF( e%lnods(6) == 0 )THEN
+         i = 0  !do nothing
+       ELSE IF( e%lnods(5) == 0 )THEN
+         i = +1 !rotate counter-clock-wise
+       ELSE IF(  e%lnods(4) == 0 )THEN
+         i = -1 !rotate clock-wise
+       ELSE
+         STOP 'n = 1, nn = 2'
+       END IF
+       e%bcode = 3
+     ELSE IF( n == 1 .AND. nn == 3 )THEN ! CASE 4/5
+       IF( e%lnods(6) == 0 .AND. (e%lnods(10) == 0 .OR. e%lnods(7) == 0) )THEN
+         i = 0  !do nothing
+       ELSE IF( e%lnods(5) == 0 .AND. (e%lnods(11) == 0 .OR. e%lnods(8) == 0) )THEN
+         i = +1 !rotate counter-clock-wise
+       ELSE IF( e%lnods(4) == 0 .AND. (e%lnods(12) == 0 .OR. e%lnods(9) == 0) )THEN
+         i = -1 !rotate clock-wise
+       ELSE
+         STOP 'n = 1, nn = 3'
+       END IF
+       e%bcode = 4  !see later if it changes to 5
+     ELSE IF( n == 2 .AND. nn == 4 )THEN ! CASE 6
+       IF( e%lnods(4) /= 0 ) THEN
+         i = 0  !do nothing
+       ELSE IF( e%lnods(5) /= 0 )THEN
+         i = -1 !rotate clock-wise
+       ELSE IF(  e%lnods(6) /= 0 )THEN
+         i = +1 !rotate counter-clock-wise
+       ELSE
+         STOP 'n = 1, nn = 3'
+       END IF
+       e%bcode = 6
+     ELSE
+        STOP 'not found'
+     END IF
+     SELECT CASE (i)
+     CASE (-1) !clock-wise
+       nl = e%lnods
+       nes = e%lside
+       e%lnods = nl((/ 2,3,1,5,6,4,9,10,11,12,7,8 /))
+       e%lside(1:3) = nes((/ 2,3,1 /))
+       ej => e%neig2
+       e%neig2 => e%neig3
+       e%neig3 => e%neig1
+       e%neig1 => ej
+     CASE ( 0) !nothing
+     CASE ( 1) !counter-clock-wise
+       nl = e%lnods
+       nes = e%lside
+       e%lnods = nl((/ 3,1,2,6,4,5,11,12,7,8,9,10 /))
+       e%lside(1:3) = nes((/ 3,1,2 /))
+       ej => e%neig3
+       e%neig3 => e%neig2
+       e%neig2 => e%neig1
+       e%neig1 => ej
+     END SELECT
+     IF( e%bcode == 4 .AND. e%lnods(7) == 0 )e%bcode = 5
+   END IF
+   !WRITE(58,"(i5,16i5)")e%numel,e%lnods
+   e => e%next
+ END DO
+ !DEALLOCATE(boundn)
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE top_array30
+   RECURSIVE SUBROUTINE lock30(ln,i,lock,signo)
+   !
+   IMPLICIT none
+
+     INTEGER (kind=4),INTENT(IN) ::  ln(:,:),i,signo
+     INTEGER (kind=4),INTENT(IN OUT) :: lock(:)
+     INTEGER (kind=4) :: j,k
+
+     DO j=1,3           !for each side
+       k = ln(j,i)      !side element
+       IF( k == 0 )CYCLE   !no side element cycle
+       IF( k > 0 )THEN        !side element and coincident normals
+         IF( lock(k) == 0 )THEN     !not locked
+           lock(k) = signo            !lock
+           CALL lock30(ln,k,lock,signo) !and continue
+         ELSE  !alreadky locked
+           CYCLE
+         END IF
+       ELSE
+         IF( lock(-k) == 0 )THEN     !not locked
+           lock(-k) = -signo
+           CALL lock30(ln,-k,lock,-signo) !and continue
+         ELSE  !alreadky locked
+           CYCLE
+         END IF
+       END IF
+     END DO
+
+   RETURN
+   END SUBROUTINE lock30
+
+   SUBROUTINE  ele30p(j,e,ej,flag)
+   ! create and use pointers to neighbour elements
+     INTEGER (kind=4), INTENT(IN) :: j
+     TYPE (ele30), POINTER :: e,ej
+     LOGICAL, INTENT(IN) :: flag
+
+     IF(flag)THEN  ! keep pointers of neighbour elements
+       SELECT CASE (j)
+       CASE (1)
+         e%neig1 => ej
+       CASE (2)
+         e%neig2 => ej
+       CASE (3)
+         e%neig3 => ej
+       END SELECT
+     ELSE          ! point to neighbour element
+       SELECT CASE (j)
+       CASE (1)
+          ej => e%neig1
+       CASE (2)
+          ej => e%neig2
+       CASE (3)
+          ej => e%neig3
+       END SELECT
+     END IF
+     RETURN
+   END SUBROUTINE ele30p

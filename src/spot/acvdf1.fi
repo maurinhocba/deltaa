@@ -1,0 +1,37 @@
+ SUBROUTINE acvdf1(ndime,nnode,ndofn,nelem,ifpre,heade)
+ !******************************************************************
+ !
+ !*** activates degrees of freedom
+ !
+ !******************************************************************
+ USE npo_db, ONLY : naeul
+ USE esets_db, ONLY : gnods, gelem !INTENT(OUT) gnods(maxnn,melen)
+ IMPLICIT NONE
+ INTEGER(kind=4),INTENT(IN) :: ndime,nnode,ndofn,nelem
+ INTEGER(kind=4),INTENT(OUT) :: ifpre(:,:)
+ TYPE(ele01), POINTER :: heade
+
+ INTEGER (kind=4) ielem,j,n
+ TYPE(ele01), POINTER :: e
+
+ !*** activates degrees of freedom
+
+ e => heade
+ DO ielem=1,nelem
+   DO j=1,nnode
+     n=e%lnods(j)
+     IF( n > 0 ) THEN
+       ifpre(1:ndime,n) = 0
+       IF( e%rot)THEN
+         ifpre(ndime+1:ndofn,n) = 0
+         naeul(n) = .TRUE.
+      END IF
+     END IF
+   END DO
+   gelem = gelem + 1
+   gnods(1:nnode,gelem) = e%lnods
+   e => e%next
+ END DO
+
+ RETURN
+ END SUBROUTINE acvdf1

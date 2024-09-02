@@ -1,0 +1,43 @@
+ SUBROUTINE kgmm17 (cd,s,stiff,ntype,r,sh, nnode)
+ !
+ ! compute geometric stiffness for QUADL
+ !
+ IMPLICIT NONE
+ ! dummy arguments
+ INTEGER(kind=4), INTENT(IN) :: ntype,   & !problem type
+                                nnode
+ REAL (kind=8), INTENT(IN) ::  cd(nnode,2),  & !cartesian derivatives at point
+                               s(4),         & !stresses * dvol
+                               sh(nnode),    & !shape functions
+                               r               !point radius
+ REAL (kind=8), INTENT(OUT) :: stiff(*)  !stiffness matrix
+ ! local variables
+ INTEGER (kind=4) i,j,k,l,n,pos,nv
+ REAL (kind=8) :: value,valur            !diagonal value to add
+ INTEGER (kind=4) poesti
+ poesti(nv,i,j) = (nv-i)*(i-1)/2+j    ! position i,j in stiff(nxn)
+
+
+ nv = 4*nnode
+ IF( ntype == 3 )   valur = s(4)/r**2  !for axilsymmetric problems
+ l = 0           ! initializes DOF position I
+ DO i=1,nnode    ! for each node
+   n = l         ! initializes DOF position J
+   DO j=i,nnode  ! for each node (upper part)
+     value = + s(1)*cd(i,1)*cd(j,1) + s(2)*cd(i,2)*cd(j,2) &
+             + s(3)*(cd(i,2)*cd(j,1)+cd(j,2)*cd(i,1))
+     DO k=1,2    ! for each DOF (diagonal only)
+       pos = poesti(nv,l+k,n+k)   ! (I,J)
+       stiff(pos) = stiff(pos) + value
+     END DO
+     IF( ntype == 3 ) THEN
+       pos = poesti(nv,l+1,n+1)      ! (I,J)
+       stiff(pos) = stiff(pos) + valur*sh(i)*sh(j)
+     END IF
+     n = n + 2   ! increment DOF position J
+   END DO
+   l = l + 2     ! increment DOF position I
+ END DO
+
+ RETURN
+ END SUBROUTINE kgmm17

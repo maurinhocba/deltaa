@@ -1,0 +1,101 @@
+ SUBROUTINE elmd03(nelem,heade,taile,iwrit,quad,nnode,nstre)
+ !******************************************************************
+ !
+ !*** READ element DATA for shell elements
+ !
+ !******************************************************************
+ USE npo_db, ONLY : coord
+ IMPLICIT NONE
+
+ ! dummy arguments
+ INTEGER (kind=4) :: nelem,iwrit,nnode,nstre
+ TYPE (ele03), POINTER :: heade,taile !pointers to first and last elements
+ LOGICAL, INTENT(IN) :: quad
+
+ !Local variables
+ INTEGER (kind=4) isec,i,nlayr,mtype,osec,stype,ip
+ TYPE (ele03), POINTER :: elem      !auxiliar pointer
+ TYPE (section), POINTER :: sec      !auxiliar pointer
+
+ LOGICAL found, plast
+ INTEGER(kind=4) :: chnode
+ INTEGER (kind=4) :: secs(2) = (/ 14,15 /)
+ integer(kind=4), PARAMETER :: nn(2,3) =(/ 2,3, 3,1, 1,2 /)
+
+
+ ! *** READ the element nodal connections, and the property numbers.
+
+ IF(iwrit == 1) WRITE (lures,"(//'   Element  Secc            Node ', &
+                        &        'Numbers                  angle  ')",ERR=9999)
+
+ osec = -1
+ DO
+   ! loop over elements
+
+   CALL listen('ELMD03')          !read a card
+   IF (exists('ENDELE')) EXIT     !if key word END_ELEMENT read, exit loop
+
+   nelem = nelem + 1         !increase element counter
+   CALL new_ele03e (elem)           !reserve memory for data
+   ALLOCATE(elem%strsg(nstre))
+   elem%strsg = 0d0
+   elem%numel = INT (param(1))    !element label
+   isec = INT (param(2))         !associated material
+   !     check if associated material exists
+   IF( isec /= osec )THEN
+     CALL sect_search (isec,found,sec,ip)
+     IF(.NOT.found)CALL runend('SHELQ:  Invalid Section Number used')
+     mtype = sec%secty       !check section type for element
+     IF( .NOT. ANY(mtype == secs)  ) CALL runend('TLLL : Invalid sect. type for TLLL')
+
+     nlayr = sec%iprop(1)     !number of layers
+     stype = sec%secdef(3)    !section constitutive type
+     plast = .FALSE.
+     IF(stype == 14) plast = sec%mtbas%matdef(3) > 1   !plasticiy
+     osec = isec
+   END IF
+   elem%matno = ip      !store section position in array
+   ALLOCATE(elem%lnods(nnode))
+   IF(quad)THEN
+     ALLOCATE(elem%cd(4,2,3))
+     elem%lnods(7:9) = 0
+   ELSE
+     NULLIFY(elem%cd)
+   END IF
+   elem%lnods(1:6) = INT (param(3:8))  !connectivities
+   elem%angle = param(9)   ! angle between Default Ort_1 and local Ort_1
+   !    echo according to flag
+   IF(iwrit == 1) WRITE(lures,"(i10,i5,6i6,F14.4)",ERR=9999) elem%numel,isec, &
+                                                   elem%lnods(1:nnode),elem%angle
+   !     original nodes are changed
+   DO i=1,6
+     elem%lnods(i) = chnode(elem%lnods(i))
+   END DO
+   ! switch nodes
+   i = elem%lnods(4)
+   elem%lnods(4) = elem%lnods(5)
+   elem%lnods(5) = elem%lnods(6)
+   elem%lnods(6) = i
+
+   IF( plast )THEN   !reserve space for Gauss variables
+     IF( stype == 0 )THEN  !layered large strain plasticity
+       ALLOCATE( elem%ehist(5), elem%strap(6*nlayr,2) )
+       ALLOCATE( elem%stres(5,nlayr) )
+       elem%ehist = 0d0
+       elem%strap = 0d0
+       elem%stres = 0d0
+     ELSE   !solid isotropic
+       ALLOCATE( elem%ehist(5), elem%strap(nstre,2) )
+       elem%ehist = 0d0
+       elem%strap = 0d0
+       NULLIFY (elem%stres)
+     END IF
+   ELSE
+     NULLIFY (elem%ehist,elem%strap,elem%stres)   !reserve space for Gauss variables
+   END IF
+   IF( nstre > 8 .AND. mtype == 15) ALLOCATE(elem%nangl(2,3),elem%jas(2,ngamm))
+   CALL add_ele03e (elem, heade, taile) !add element to list
+ END DO
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE elmd03

@@ -1,0 +1,60 @@
+ SUBROUTINE bmai29(bm,bs,jacin,bm1,bs1,g,ansmm,anssh,nassp)
+ !*** Compute
+ !***         Cartesian Bbar matrices at external faces
+ !***         to be intepolated across the thickness
+ !***    for a 3-D 15-node Prism solid-shell element
+ !***    Green Lagrange Strains (TLF)
+ IMPLICIT NONE
+ ! dummy arguments
+ REAL (kind=8), INTENT(IN) :: bm(:,:,:,:,:),  & !(ndime,nnode,3,3,nface) in-plane matrix at faces (cartesyan or natural strains)
+                              bs(:,:,:,:),    & !(ndime,nnode,nassp,nface) assumed transverse shear matrix at faces (mixed strains)
+                              jacin(:,:,:)      !(2,2,nface) inverse jacobian at in-plane GP at each face
+
+ REAL (kind=8), INTENT(OUT) :: bm1(:,:,:,:)     !(ndime,nnod1,3,2) Bmembrane -matrix to interpolate
+ REAL (kind=8), INTENT(OUT) :: bs1(:,:,:,:)     !(ndime,nnode,2,2) Bshear    -matrix to interpolate
+
+ INTEGER (kind=4), INTENT(IN) :: g              !in-plane GP
+ INTEGER (kind=4), INTENT(IN) :: ansmm, &       !Assumed Natural Strain Membrane Model
+                                 anssh, &       !Assumed Natural Strain SHear model
+                                 nassp
+
+ ! local variables
+ INTEGER (kind=4) :: face,node,j,k              !indexes
+ REAL (kind=8) :: ba(3,3),bb(3,2),f(3,3),ji(2,2)
+
+ ! in-plane components
+ DO face=1,nface
+   ! Do not transpose Jacin
+   IF( ansmm /= 0 .OR. anssh /=0 ) ji = jacin(:,:,face)    !inverse in-plane jacobian at integration point of the face
+   ! membrane matrix (cartesian strains) at integration points (faces)
+   SELECT CASE (ansmm)   !according to Membrane Model
+   CASE (0)          !standard displacement formulation
+     bm1(:,:,:,face) = bm(:,:,:,g,face)
+   CASE (2)               !mid-side points of each subtriangle
+     !  Transpose bar T
+     f = RESHAPE( (/ ji(1,1)**2,          ji(2,1)**2,          ji(1,1)*ji(2,1), &
+                     ji(1,2)**2,          ji(2,2)**2,          ji(1,2)*ji(2,2), &
+                     2d0*ji(1,1)*ji(1,2), 2d0*ji(2,1)*ji(2,2), ji(1,1)*ji(2,2)+ji(1,2)*ji(2,1)/),(/3,3/))
+     !WRITE(58,"(3e15.5)")f                 !3x3
+     !WRITE(58,"(3e15.5)")pa2b(:,:,g)       !3x9
+     !WRITE(58,"(6e15.5)")bm(1:2,:,:,:,1)   !2x6x9
+     DO node=1,nnode
+       ba = MATMUL(RESHAPE((/ bm(:,node,:,:,face) /),(/3,nasmm/)),TRANSPOSE(pa2b(:,:,g)))
+       bm1(1:3,node,1:3,face) = MATMUL(ba,f)   !ok
+     END DO
+   END SELECT
+   ! shear matrix
+   SELECT CASE (anssh)   !according to Membrane Model
+   CASE ( 0 )
+     j = 2*g-1
+     bs1(:,:,1:2,face) = bs(:,:,j:j+1,face)
+   CASE ( 1:2 )
+     DO node=1,nnode
+       bb(1:3,1:2) = MATMUL(bs(1:3,node,:,face),TRANSPOSE(pag(1:2,1:nassp,g)))  !pag(2,nassp,ngaup)
+       bs1(1:3,node,1:2,face) = MATMUL(bb,ji)  !ok
+     END DO
+   END SELECT
+ END DO
+
+ RETURN
+ END SUBROUTINE bmai29

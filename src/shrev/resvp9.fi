@@ -1,0 +1,147 @@
+ SUBROUTINE resvp9(ntype,nelem,nnode,ndofe,ngaus,axesc,nstre,heade, &
+                   coora,euler,resid,weigh,shape,deriv,estr,       &
+                   energ,istop,bottom,top,coorb,coort,ifact,zigzag,zigzpp,ttime,esecs)
+ !********************************************************************
+ !
+ !***   evaluation of integral (b)**t*(sigma) for beam elements
+ !
+ !********************************************************************
+ USE npo_db, ONLY : psia,coord
+ IMPLICIT NONE
+
+ INTEGER (kind=4), INTENT(IN) :: ntype,nelem,nnode,ndofe,ngaus,axesc,nstre,esecs(:)
+ INTEGER (kind=4), INTENT(IN OUT) :: istop,ifact(:)
+ REAL (kind=8), INTENT(IN) :: coora(:,:),euler(:,:),  &
+                             weigh(:),shape(:,:),deriv(:,:),ttime
+ REAL (kind=8), INTENT(OUT) :: resid(:,:),coort(:,:),coorb(:,:),energ(:),estr(:,:)
+ LOGICAL, INTENT(IN) :: bottom,top
+ LOGICAL, INTENT(IN) :: zigzag,zigzpp
+ TYPE(ele09), POINTER :: heade
+
+
+ INTEGER (kind=4) ielem,l,n,isec,np,nd,osec,matty,iel,nl,secty,na
+ REAL (kind=8) phig(nnode),x(2,nnode),tn(2,nnode),bts(ndofe,nnode),thick,a(3,2)
+ REAL (kind=8) props(50)   !this is for SC_SHRE1
+                           !for SC_SHRE2-SC_SHRE4  26 is the minimun, and ZIGZAG data depends on NLAYR
+ REAL (kind=8) ::  psi(ndofe-3,nnode),disp(ndofe,nnode)
+ TYPE(ele09), POINTER :: e
+ TYPE(section), POINTER :: sec,secp,secn
+ LOGICAL :: plast,same
+
+ osec = -1
+ IF( ntype == 1 )THEN     !plane stress
+   nd = 11                !for SC_SHRE1 only
+   np = 14
+   na = ndofe - 3         !additional DOFs
+ ELSE                     !plane strain & axilsymmetric
+   nd = 21                !for SC_SHRE1 only
+   np = 26
+ END IF
+ !***  loop over all the elements
+ a = 0d0  !nothing
+ e => heade
+ DO iel=1,nelem
+   !   gathers the actual coordinates and local coordinate transf.
+   x    = coora(:,e%lnods)
+   phig = euler(1,e%lnods)
+   ielem  = e%numel
+   IF(ielem == 101 )THEN
+     PRINT *,"this"
+   END IF
+   isec  = e%matno
+   IF( isec /= osec )THEN             !present and previous material diff
+     sec => psecs(isec)%p
+     matty = sec%secdef(3)            !
+     secty = sec%secty
+     l=MIN( SIZE(sec%rprop), SIZE(props))
+     props(1:l) = sec%rprop(1:l)
+     IF( matty < 3 )THEN              !isotropic with plasticity
+       plast = sec%mtbas%matdef(3) > 1
+       thick = props(3)
+     ELSE                             ! Laminated beams
+       plast = .FALSE.
+       IF( .NOT.zigzag .and. .NOT.zigzpp ) props(12) = props(12)*props(24)  !shear correction factor
+       thick = props(1)
+       nd = 6                         !For SC_SHRE2 - SC_SHRE4
+       np = 27                        !¿?
+     END IF
+     osec  = isec
+   END IF
+   IF( zigzag .OR. zigzpp )THEN                   !For SC_SHRE2 - SC_SHRE3
+     DO n=1,nnode
+       l = e%lnods(n)
+       psi(1:na,n) = psia(1:na,l)
+       disp(1:2,n) = x(:,n) - coord(:,e%lnods(n))
+       disp(3,n) = phig(n)
+       disp(4:ndofe,n) = psi(:,n)
+     END DO
+     IF( zigzag )THEN                   !For SC_SHRE2 - SC_SHRE3
+       IF( iel == 1 )THEN                         !first element (assumed ordered)
+         same = esecs(1) == esecs (2)             !when Section is continuous at right
+       ELSE IF( iel == nelem )THEN                !last element (assumed ordered)
+         same = esecs(nelem-1) == esecs (nelem)   !when Section is continuous at left
+       ELSE                                       !inner element
+         same = esecs(iel-1) == esecs (iel) .AND. esecs(iel+1) == esecs (iel)  !when Section is continuous at both sides
+       END IF
+       IF( .NOT. same )THEN                         !When section is not continuous
+         IF( .NOT.ASSOCIATED(e%auxil))THEN          !auxiliar variables
+           nl = sec%iprop(1)                        !number of layers
+           ALLOCATE(e%auxil(19+2*nl))               !16 are used
+           IF( iel == 1 )THEN                     !point to sections according to First, Last or Inner element
+             secp => sec
+             secn => psecs(esecs(iel+1))%p
+           ELSE IF( iel == nelem )THEN
+             secp => psecs(esecs(iel-1))%p
+             secn => sec
+           ELSE
+             secp => psecs(esecs(iel-1))%p
+             secn => psecs(esecs(iel+1))%p
+           END IF
+           !CALL rztmat09(e%auxil,secp,sec,secn)
+           IF(sec%secty == 44 )THEN                        !sc_shre2
+             CALL rztmat09m(e%auxil,secp,sec,secn)
+           ELSE IF(sec%secty == 45 )THEN                   !sc_shre3
+             CALL rztmat09n(e%auxil,secp,sec,secn)
+           ELSE                                            !sc_shre4
+             same = .TRUE.
+           END IF
+         END IF
+       END IF
+     ELSE
+       same = .TRUE.
+     END IF
+   ELSE
+     same = .TRUE.
+   END IF
+   !
+   IF( same ) THEN
+     CALL intrf9(nstre,ntype,plast,nnode,zigzag,zigzpp,ngaus,matty,secty,axesc, &
+                 ielem,weigh,shape,deriv,props(nd:),props(5:),sec%rprop(np:),   &
+                 e%jac,e%r0,e%stra0,e%stres,e%sede0,e%sedef,                    &
+                 e%ehist,e%strap,bts,x,phig,e%phil,estr(:,iel),                 &
+                 energ,istop,tn,thick,psi,sec%iprop,ttime,disp)
+   ELSE
+     IF(sec%secty == 45 )THEN
+       CALL intrf9z(axesc,e%auxil,e%jac,e%stra0,e%stres,bts,x,phig,e%phil,     &
+                    estr(:,iel),psi,e%ehist,sec%rprop(28))
+     ELSE
+       CALL intrf9z(axesc,e%auxil,e%jac,e%stra0,e%stres,bts,x,phig,e%phil,     &
+                    estr(:,iel),psi,a,a(1,1))
+     END IF
+   END IF
+   DO n=1,nnode
+     l = e%lnods(n)
+     resid(1:ndofe,l) = resid(1:ndofe,l) + bts(1:ndofe,n)
+   END DO
+   IF(top .OR. bottom)THEN
+     DO n=1,nnode
+       l = e%lnods(n)
+       IF( top  )coort(1:2,l) = coort(1:2,l) + tn(1:2,n)
+       IF(bottom)coorb(1:2,l) = coorb(1:2,l) - tn(1:2,n)
+       ifact(l) = ifact(l) + 2
+     END DO
+   END IF
+   e => e%next
+ END DO
+ RETURN
+ END SUBROUTINE resvp9

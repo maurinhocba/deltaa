@@ -1,0 +1,23 @@
+ SUBROUTINE bbar16(nnode,cd,bb,t1,vol)
+ ! volumetric B-Bar matrix for nnode  prism
+ IMPLICIT NONE
+ ! Dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: nnode 
+ REAL(Kind=8), INTENT(IN) :: cd(nnode,3), & !6-node cartesian derivatives
+                             t1(3,3), & !deformation gradient
+                             vol        !element volume
+ REAL(Kind=8), INTENT(IN OUT) :: bb(3,nnode)   !B-bar matrix
+
+ ! local variables
+ INTEGER(kind=4) :: i,n  !index
+ REAL(kind=8) :: f       !auxiliar value
+
+   DO n=1,nnode     !for each node
+     DO i=1,3   !for each in-plane direction
+       f = cd(n,1)*t1(i,1) + cd(n,2)*t1(i,2) + cd(n,3)*t1(i,3)
+       bb(i,n) = bb(i,n) + f*vol ! DOT_PRODUCT(cd(n,:),t1(i,:))*vol
+     END DO
+   END DO
+
+ RETURN
+ END SUBROUTINE bbar16

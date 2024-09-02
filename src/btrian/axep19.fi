@@ -1,0 +1,92 @@
+ SUBROUTINE axep19(x,cd,area,angle,r,ntype,ver)
+ !***********************************************************************
+ !
+ !    this routine compute the element local axes system
+ !    for the 6 node element
+ !    (local x-axis is directed along fiber at an Angle with
+ !
+ !    cartesian derivatives are also computed
+ !***********************************************************************
+ IMPLICIT NONE
+ ! dummy arguments
+ REAL (kind=8),INTENT(IN) :: x(2,6),r(3),  & !nodal coordinates
+                             angle      !angle between standard X1 and local X1
+ REAL (kind=8),INTENT(OUT) :: cd(nnode,3,ngaus),area(ngaus)
+ INTEGER (kind=4), INTENT(IN) ::  ntype,ver
+
+ ! local variables
+ INTEGER (kind=4) i,j
+
+ REAL (kind=8) l1(2),l2(2),t1(2),t2(2),t3,jac(2,2),ji(2,2),cosa,sina
+
+! ! Gauss points near vertex points
+  REAL (kind=8), PARAMETER :: nd(6,2,3,2) = (/         &
+ 1.333333333333330, 0.000000000000000, -0.333333333333333,  0.333333333333333, -0.333333333333333, -1.000000000000000, &
+ 0.000000000000000, 0.333333333333333, -0.333333333333333,  1.333333333333330,  0.000000000000000, -1.333333333333330, &
+ 0.333333333333333, 0.000000000000000, -0.333333333333333,  1.333333333333330, -1.333333333333330,  0.000000000000000, &
+ 0.000000000000000, 1.333333333333330, -0.333333333333333,  0.333333333333333, -1.000000000000000, -0.333333333333333, &
+ 0.333333333333333, 0.000000000000000, -1.333333333333330,  0.333333333333333, -0.333333333333333,  1.000000000000000, &
+ 0.000000000000000, 0.333333333333333, -1.333333333333330,  0.333333333333333,  1.000000000000000, -0.333333333333333, &
+ 1.0D0,             0.0D0,              0.0D0,              1.0D0,             -1.0D0,             -1.0D0,             &
+ 0.0D0,             1.0D0,              0.0D0,              1.0D0,             -1.0D0,             -1.0D0,             &
+ 0.0D0,             0.0D0,             -1.0D0,              1.0D0,             -1.0D0,              1.0D0,             &
+ 0.0D0,             1.0D0,             -1.0D0,              0.0D0,              0.0D0,              0.0D0,             &
+ 1.0D0,             0.0D0,             -1.0D0,              0.0D0,              0.0D0,              0.0D0,             &
+ 0.0D0,             0.0D0,             -1.0D0,              1.0D0,              1.0D0,             -1.0D0             /)
+
+
+
+ ! initializes average derivatives
+ cd = 0d0
+ !*** evaluate
+ l1 = (/  1d0, 0d0 /)
+ l2 = (/  0d0, 1d0 /)
+
+ cosa = COS(angle)                            !angle to compute
+ sina = SIN(angle)                            !local X1 direction
+
+ t1 = l1*cosa + l2*sina                 !local X1 direction
+ t2 =-l1*sina + l2*cosa                 !local X2 direction
+
+
+ DO i=1,ngaus
+   l1 = MATMUL(x,nd(:,1,i,ver))
+   l2 = MATMUL(x,nd(:,2,i,ver))
+
+   !*** find the local cartesian derivatives at the three gauss points
+
+   jac(1,1) = DOT_PRODUCT(l1,t1) !x,xi
+   jac(1,2) = DOT_PRODUCT(l2,t1) !x,eta
+   jac(2,1) = DOT_PRODUCT(l1,t2) !y,xi
+   jac(2,2) = DOT_PRODUCT(l2,t2) !y,eta
+   t3 = jac(1,1)*jac(2,2) - jac(1,2)*jac(2,1)  !determinant
+   area(i) = t3/6d0                       ! associated area
+
+   IF (area(i) <= 0.0D0)THEN
+     WRITE (55,*,ERR=9999) 'ERROR: AREA <= 0 '
+     WRITE(55,"(6e15.5)",ERR=9999) x(1:2,1:6)
+     CALL runen3('AXEP19: WRONG ELEMENT DEFINITION   ')
+   END IF
+
+   ji(1,1) = jac(2,2)/t3         !xi,x
+   ji(1,2) =-jac(1,2)/t3         !xi,y
+   ji(2,1) =-jac(2,1)/t3         !eta,x
+   ji(2,2) = jac(1,1)/t3         !eta,y
+
+   !compute cartesian derivatives
+
+   DO j=1,6
+     cd(j,1,i) = ji(1,1)*nd(j,1,i,ver) + ji(2,1)*nd(j,2,i,ver)
+     cd(j,2,i) = ji(1,2)*nd(j,1,i,ver) + ji(2,2)*nd(j,2,i,ver)
+   END DO
+   IF(ntype == 3) THEN
+     IF( r(i) > 0d0 )THEN
+       cd(:,3,i) = shapef(:,i,ver)/r(i)
+     !ELSE
+     !  cd(:,3,i) = shapef(:,i,ver)/r(i) !¿?
+      END IF
+   END IF
+ END DO
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE axep19

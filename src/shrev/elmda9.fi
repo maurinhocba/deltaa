@@ -1,0 +1,129 @@
+ SUBROUTINE elmda9(nelem,nnode,nstre,ngaus,axesc,heade,taile,iwrit)
+ !******************************************************************
+ !
+ !*** READ element DATA for 2-D beam/shell elements
+ !
+ !******************************************************************
+ USE ctrl_db, ONLY : ntype
+ IMPLICIT NONE
+
+ ! dummy arguments
+ INTEGER (kind=4), INTENT(IN) :: nnode,ngaus,axesc,iwrit
+ INTEGER (kind=4), INTENT(IN OUT) :: nelem,nstre
+ TYPE (ele09), POINTER :: heade,taile !pointers to first and last elements
+ TYPE (section), POINTER :: sec      !auxiliar pointer
+
+ ! local variables
+ INTEGER (kind=4) i,isec,mtype,osec,ip,osect
+ TYPE(ele09), POINTER :: elem
+ LOGICAL found,plast
+ INTEGER(kind=4) chnode
+ INTEGER (kind=4) :: secs(4) = (/ 43,44,45,46 /)
+ LOGICAL :: first
+
+! *** READ the element nodal connections, and the property numbers.
+
+ osec = -1
+ IF(iwrit == 1) WRITE (lures,"(/' ELEMENT  SECC      NODE NUMBERS ')",ERR=9999)
+ first = .TRUE.
+ DO
+   ! loop over elements
+
+   CALL listen('ELMDA6')          !read a card
+   IF (exists('ENDELE')) EXIT     !if key word END_ELEMENT read, exit loop
+
+   nelem = nelem + 1         !increase element counter
+   ALLOCATE (elem)           !reserve memory for data
+   NULLIFY(elem%auxil)
+   ALLOCATE (elem%lnods(nnode),       &
+             elem%phil(MAX(ABS(axesc),1)),  &
+             elem%jac(ngaus),         &
+             elem%r0(ngaus),          &
+             elem%sede0(ngaus),       &
+             elem%sedef(ngaus))
+   ! initializes
+   elem%phil = 0d0
+   elem%prpro = 0
+   elem%numel = INT (param(1))    !element label
+   isec = INT (param(2))         !associated material
+   !     check if associated material exists
+   IF( isec /= osec )THEN
+     CALL sect_search (isec,found,sec,ip)
+     IF(.NOT.found)CALL runend('SHREV:  Invalid Section Number used')
+     mtype = sec%secty       !check section type for element
+     IF( .NOT. ANY(mtype == secs) ) CALL runend('SHREV : Invalid sect. type for SHREV')
+
+     !nlayr = sec%iprop(1)     !number of layers
+     !nucom = sec%iprop(2)     !number of material components
+     !stype = sec%secdef(3)    !section constitutive type
+     IF( sec%mabas > 0 )THEN
+       plast = sec%mtbas%matdef(3) > 1   !plasticiy
+       IF( ntype == 4 ) plast = .FALSE.  !elastic
+       IF( plast .AND. sec%mtbas%matdef(4) > 4 )THEN  !isotropic hardening type
+         WRITE(lures,"('For SHREV element type',/,                    &
+         & '   use only the following isotropic hardening types:',/,  &
+         & '                      IHNONE,IHLINE,IHLUDW or IHSATU')",ERR=9999)
+         WRITE(55   ,"('For SHREV element type',/,                    &
+         & '   use only the following isotropic hardening types:',/,  &
+         & '                      IHNONE,IHLINE,IHLUDW or IHSATU')",ERR=9999)
+         CALL runend('SHREV:  Invalid Isotropic hard type')
+       END IF
+     ELSE
+       plast = .FALSE.
+       IF( mtype >= 44 )THEN
+         IF( first )THEN
+           osect = mtype
+           SELECT CASE (mtype)
+           CASE (44,45)
+             nstre = nstre + 2
+           CASE (46)
+             nstre = nstre + 8
+           END SELECT
+           first = .FALSE.
+         ELSE
+           IF( mtype /= osect ) STOP 'invalid section type combination por SHREV'
+         END IF
+       END IF
+     END IF
+     osec = isec
+   END IF
+   elem%matno = ip      !store section position in array
+   elem%lnods(1:nnode) = INT (param(3:2+nnode))  !connectivities
+   ALLOCATE (elem%stra0(nstre,ngaus),elem%stres(nstre,ngaus) )
+   !    echo according to flag
+   IF( ntype == 4 )THEN
+      elem%sede0(1:3) = param(5:7)
+      elem%sedef(1:3) = param(8:10)
+   ELSE IF( plast )THEN   !reserve space for Gauss variables
+     ALLOCATE( elem%ehist(5,ngaus), elem%strap(nstre,ngaus,2) )
+     elem%ehist = 0d0
+     elem%strap = 0d0
+   ELSE
+     NULLIFY( elem%ehist,elem%strap,elem%lstre )
+     IF( mtype >= 44 )THEN
+       elem%prpro = MIN(ABS(INT(param(3+nnode))),3)  !print profile stresses and displacements
+       !IF( zigzag .OR. zigzpp )THEN
+       !  ALLOCATE(elem%ehist(nstre,ngaus))                 !¿? why 3
+       !  elem%ehist = 0d0
+       !END IF
+     END IF
+   END IF
+   IF(iwrit == 1)THEN
+     IF( ntype == 4 )THEN
+        WRITE(lures,"(i8,i5,2i7,6f10.4)",ERR=9999)elem%numel,isec,elem%lnods,param(5:10)
+     ELSE
+       IF(elem%prpro == 0)WRITE(lures,"(i8,i5,3i7)",ERR=9999) elem%numel,isec,elem%lnods
+       IF(elem%prpro /= 0)WRITE(lures,"(i8,i5,4i7)",ERR=9999) elem%numel,isec,elem%lnods,elem%prpro
+     END IF
+   END IF
+   !     original nodes are changed
+   DO i=1,nnode
+     elem%lnods(i) = chnode(elem%lnods(i))
+   END DO
+
+   CALL add_ele09e (elem, heade, taile) !add element to list
+ END DO
+
+ RETURN
+ 9999 CALL runen2('')
+ END SUBROUTINE elmda9
