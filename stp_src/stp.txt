@@ -1,0 +1,18 @@
+STP: uso con linea de comandos y/o archivo
+
+Los argumentos son 2
+
+1- proyecto/estrategia/remallado (string)  ????.@?_rm?
+   si existe .@? sólo se post-procesa dicha estrategia
+     si existe rm? solo se post-procesa ese archivo
+     si no se post-procesan todos los archivos correspondientes a la estrategia
+   si no existe .@? se post-procesan todas las estrategias existentes
+
+2- Frequencia a leer desde los archivos (entero)
+   si se desean todos los pasos leidos (1)
+   para el caso de que exita  .@ (post-proceso de una estrategia) se puede indicar
+   la lista de los pasos a post-procesar en el formato (sin espacios)
+   {2,5,12,18,..,60}
+
+Si se usa el archivo de datos (stp.dat) los argumentos van en líneas diferentes (dos líneas)
+
